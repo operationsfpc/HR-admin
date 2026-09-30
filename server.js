@@ -814,9 +814,17 @@ if (AUTO_SYNC) {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, mock: MOCK, storage: db.storageBackend() }));
 
-app.listen(PORT, () => {
-  console.log(`HackerRank Admin Dashboard → http://localhost:${PORT}${MOCK ? '  [MOCK]' : ''}`);
-  console.log(`Admin login: ${ADMIN_USER} / ${ADMIN_PASS}${ADMIN_USER === 'admin' && ADMIN_PASS === 'admin' ? '  (set ADMIN_USER/ADMIN_PASS env to change)' : ''}`);
+const PORT = Number(process.env.PORT) || 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`HackerRank Admin Dashboard running on port ${PORT}`);
   console.log(`Storage: ${db.storageBackend()}`);
-  console.log(`Auto-sync: ${AUTO_SYNC ? 'ON at ' + AUTO_TIMES.join(', ') + ' ' + AUTO_TZ + (MOCK || (HR_EMAIL && HR_PASS) ? '' : ' (⚠ set HR_EMAIL/HR_PASS)') : 'off (set AUTO_SYNC=1)'}`);
+  console.log(
+    `Auto-sync: ${
+      AUTO_SYNC
+        ? `ON at ${AUTO_TIMES.join(", ")} ${AUTO_TZ}`
+        : "off"
+    }`
+  );
 });
+
