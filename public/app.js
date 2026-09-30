@@ -40,10 +40,14 @@ function logout() { adminToken = ''; localStorage.removeItem('hradmin_token'); $
 $('logout-btn').addEventListener('click', logout);
 
 async function enterApp() {
-  $('login-screen').classList.add('hidden'); $('app').classList.remove('hidden');
-  await loadColleges();
-  loadAutoSyncStatus();
-  loadSharedTabs();
+  try {
+    $('login-screen').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    await loadColleges();
+    await Promise.allSettled([loadAutoSyncStatus(), loadSharedTabs()]);
+  } catch (e) {
+    logout();
+  }
 }
 async function loadAutoSyncStatus() {
   try {
