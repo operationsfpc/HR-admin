@@ -1,6 +1,47 @@
 {
   "version": 2,
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/server.js" }
+  "builds": [
+    {
+      "src": "api/index.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index.js"
+    },
+    {
+      "src": "/view/(.*)",
+      "dest": "/api/index.js"
+    },
+    {
+      "src": "/college/(.*)",
+      "dest": "/api/index.js"
+    },
+    {
+      "src": "/student",
+      "dest": "/api/index.js"
+    },
+    {
+      "src": "/student/(.*)",
+      "dest": "/api/index.js"
+    },
+    {
+      "src": "/admin",
+      "dest": "/api/index.js"
+    },
+    {
+      "src": "/favicon.ico",
+      "dest": "/api/index.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
+    }
   ]
 }
