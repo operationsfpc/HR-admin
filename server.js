@@ -773,6 +773,7 @@ app.get('/api/college/:token/attendance', async (req, res) => {
 });
 app.get(['/view/:token', '/view/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
 app.get(['/college/:token', '/college/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get(['/student', '/student/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'student.html')));
 app.get(['/admin', '/admin/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -850,7 +851,11 @@ if (AUTO_SYNC) {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, mock: MOCK, storage: db.storageBackend() }));
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+export default app;
 
