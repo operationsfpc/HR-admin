@@ -740,6 +740,7 @@ app.get('/api/college/:token/attendance', async (req, res) => {
 });
 app.get(['/view/:token', '/view/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
 app.get(['/college/:token', '/college/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
+app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get(['/student', '/student/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'student.html')));
 app.get(['/admin', '/admin/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
