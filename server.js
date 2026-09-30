@@ -9,7 +9,8 @@ import * as db from './lib/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 4000;
+app.set('trust proxy', 1);
+const PORT = Number(process.env.PORT) || 3000;
 const MOCK = process.env.MOCK === '1';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin';
@@ -572,13 +573,13 @@ async function computeDaily(contest, N = 10) {
 
 // Per-student daily questions-completed (derived from daily snapshots).
 app.get('/api/daily/:contestId', requireAdmin, async (req, res) => {
- try {
-  const contest = await db.getContest(req.params.contestId);
-  if (!contest) return res.status(404).json({ error: 'Course not found.' });
-  const N = Math.min(Math.max(parseInt(req.query.days, 10) || 10, 1), 60); // last N days (default 10)
-  const { days, students } = await computeDaily(contest, N);
-  res.json({ contest: { name: contest.name }, days, students });
- } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const contest = await db.getContest(req.params.contestId);
+    if (!contest) return res.status(404).json({ error: 'Course not found.' });
+    const N = Math.min(Math.max(parseInt(req.query.days, 10) || 10, 1), 60); // last N days (default 10)
+    const { days, students } = await computeDaily(contest, N);
+    res.json({ contest: { name: contest.name }, days, students });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------------- Student portal (access code) ----------------
@@ -602,37 +603,37 @@ app.post('/api/student/contests', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/student/practice', async (req, res) => {
- try {
-  const { college, accessCode, hrUsername, contestId } = req.body || {};
-  if (!(await db.verifyCollegeCode(college, accessCode))) return res.status(401).json({ error: 'Wrong college or access code.' });
-  const c = await db.getCollegeByName(college);
-  // Choose the requested contest, else the college's first contest.
-  const contests = await db.listContests(c.name);
-  const ct = contests.find((x) => String(x.id) === String(contestId)) || contests[0];
-  const slug = ct?.slug || c.slug;
-  const dash = slug ? await cachedLatestScrape(slug) : null;
-  let contest = null, questions = [], stats = null, topicVideos = {};
-  if (dash) {
-    contest = { name: (ct && ct.name) || dash.contest.name };
-    topicVideos = await db.getTopicVideos(slug);
-    const saved = await db.getTopics(slug);
-    const cats = await db.getQuestionCategories(slug);
-    const u = dash.users.find((x) => x.username.toLowerCase() === String(hrUsername).toLowerCase());
-    questions = dash.questions.map((q) => {
-      const st = (u && u.questionStatus[q.name]) || { score: 0, points: q.points, solved: false, attempted: false };
-      return { name: q.name, url: q.url, points: q.points, topic: resolveTopic(saved, q.name), category: cats[q.name] || '', score: st.score || 0, solved: !!st.solved, attempted: !!st.attempted };
-    });
-    const total = dash.questions.length;
-    const sorted = dash.users.slice().sort((a, b) => b.computedScore - a.computedScore);
-    const rank = u ? sorted.findIndex((x) => x.username === u.username) + 1 : null;
-    stats = {
-      inContest: !!u, solved: u ? u.solved : 0, total, score: u ? u.computedScore : 0,
-      attempted: u ? u.attempted : 0, completion: total ? Math.round(((u ? u.solved : 0) / total) * 100) : 0,
-      rank, participants: dash.users.length,
-    };
-  }
-  res.json({ contest, questions, hrUsername, stats, topicVideos });
- } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { college, accessCode, hrUsername, contestId } = req.body || {};
+    if (!(await db.verifyCollegeCode(college, accessCode))) return res.status(401).json({ error: 'Wrong college or access code.' });
+    const c = await db.getCollegeByName(college);
+    // Choose the requested contest, else the college's first contest.
+    const contests = await db.listContests(c.name);
+    const ct = contests.find((x) => String(x.id) === String(contestId)) || contests[0];
+    const slug = ct?.slug || c.slug;
+    const dash = slug ? await cachedLatestScrape(slug) : null;
+    let contest = null, questions = [], stats = null, topicVideos = {};
+    if (dash) {
+      contest = { name: (ct && ct.name) || dash.contest.name };
+      topicVideos = await db.getTopicVideos(slug);
+      const saved = await db.getTopics(slug);
+      const cats = await db.getQuestionCategories(slug);
+      const u = dash.users.find((x) => x.username.toLowerCase() === String(hrUsername).toLowerCase());
+      questions = dash.questions.map((q) => {
+        const st = (u && u.questionStatus[q.name]) || { score: 0, points: q.points, solved: false, attempted: false };
+        return { name: q.name, url: q.url, points: q.points, topic: resolveTopic(saved, q.name), category: cats[q.name] || '', score: st.score || 0, solved: !!st.solved, attempted: !!st.attempted };
+      });
+      const total = dash.questions.length;
+      const sorted = dash.users.slice().sort((a, b) => b.computedScore - a.computedScore);
+      const rank = u ? sorted.findIndex((x) => x.username === u.username) + 1 : null;
+      stats = {
+        inContest: !!u, solved: u ? u.solved : 0, total, score: u ? u.computedScore : 0,
+        attempted: u ? u.attempted : 0, completion: total ? Math.round(((u ? u.solved : 0) / total) * 100) : 0,
+        rank, participants: dash.users.length,
+      };
+    }
+    res.json({ contest, questions, hrUsername, stats, topicVideos });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Which tabs the shared (read-only) views may show. Global, default all on.
@@ -737,10 +738,11 @@ app.get('/api/college/:token/attendance', async (req, res) => {
     res.json(await collegeAttendance(college ? college.name : ''));
   } catch (e) { res.status(200).json({ error: e.message, sheets: [] }); }
 });
-app.get('/view/:token', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
-app.get('/college/:token', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
+app.get(['/view/:token', '/view/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
+app.get(['/college/:token', '/college/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
+app.get(['/student', '/student/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'student.html')));
+app.get(['/admin', '/admin/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.get('/student', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'student.html')));
 // ---------------- Automatic sync (scheduled) ----------------
 const autoState = { lastRun: null, lastResult: null, running: false };
 async function scrapeAndSave(session, contest, onProgress) {
@@ -814,9 +816,6 @@ if (AUTO_SYNC) {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, mock: MOCK, storage: db.storageBackend() }));
 
-app.listen(PORT, () => {
-  console.log(`HackerRank Admin Dashboard → http://localhost:${PORT}${MOCK ? '  [MOCK]' : ''}`);
-  console.log(`Admin login: ${ADMIN_USER} / ${ADMIN_PASS}${ADMIN_USER === 'admin' && ADMIN_PASS === 'admin' ? '  (set ADMIN_USER/ADMIN_PASS env to change)' : ''}`);
-  console.log(`Storage: ${db.storageBackend()}`);
-  console.log(`Auto-sync: ${AUTO_SYNC ? 'ON at ' + AUTO_TIMES.join(', ') + ' ' + AUTO_TZ + (MOCK || (HR_EMAIL && HR_PASS) ? '' : ' (⚠ set HR_EMAIL/HR_PASS)') : 'off (set AUTO_SYNC=1)'}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
 });
