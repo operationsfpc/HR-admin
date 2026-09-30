@@ -91,7 +91,14 @@ function requireAdmin(req, res, next) {
 function slugFromUrl(url) { const u = String(url || '').trim(); if (!u) return ''; try { return parseContestSlug(u); } catch { return ''; } }
 
 // ---------------- Colleges ----------------
-app.get('/api/colleges', requireAdmin, async (_req, res) => { try { res.json({ colleges: await db.listColleges() }); } catch (e) { res.status(500).json({ error: e.message }); } });
+app.get('/api/colleges', requireAdmin, async (_req, res) => {
+  try {
+    res.json({ colleges: await db.listColleges() });
+  } catch (e) {
+    console.error('[api /api/colleges]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/colleges', requireAdmin, async (req, res) => {
   try {
     const { name, accessCode, contestUrl } = req.body || {};
