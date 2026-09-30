@@ -5,7 +5,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node --trace-uncaught server.js",
     "dev": "node --watch server.js",
     "mock": "MOCK=1 node server.js"
   },
