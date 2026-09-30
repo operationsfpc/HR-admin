@@ -69,14 +69,40 @@ function pruneScrapesFor(slug) {
     .catch((e) => console.warn('[prune] failed for', slug, e.message));
 }
 
-// ---------------- Admin auth (token-based) ----------------
+// ---------------- Admin auth (stateless HMAC-signed tokens) ----------------
+const AUTH_SECRET = process.env.ADMIN_SECRET || process.env.SUPABASE_DB_URL || `${ADMIN_USER}:${ADMIN_PASS}`;
+
+function generateAdminToken() {
+  const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // valid for 30 days
+  const payload = `${ADMIN_USER}:${expiresAt}`;
+  const sig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
+  return Buffer.from(`${payload}:${sig}`).toString('base64url');
+}
+
+function verifyAdminToken(token) {
+  if (!token) return false;
+  try {
+    const raw = Buffer.from(token, 'base64url').toString('utf8');
+    const parts = raw.split(':');
+    if (parts.length !== 3) return false;
+    const [user, expStr, sig] = parts;
+    if (user !== ADMIN_USER) return false;
+    const expiresAt = Number(expStr);
+    if (!expiresAt || Date.now() > expiresAt) return false;
+    const expectedSig = crypto.createHmac('sha256', AUTH_SECRET).update(`${user}:${expStr}`).digest('hex');
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig));
+  } catch {
+    return false;
+  }
+}
+
 const adminTokens = new Set();
 const hrSessions = new Map(); // hr login sessions for scraping: token -> {jar,csrfToken}
 
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
   if (username === ADMIN_USER && password === ADMIN_PASS) {
-    const token = crypto.randomUUID();
+    const token = generateAdminToken();
     adminTokens.add(token);
     return res.json({ ok: true, token, defaultCreds: ADMIN_USER === 'admin' && ADMIN_PASS === 'admin' });
   }
@@ -84,7 +110,7 @@ app.post('/api/admin/login', (req, res) => {
 });
 function requireAdmin(req, res, next) {
   const t = req.get('x-admin-token') || req.query.adminToken;
-  if (t && adminTokens.has(t)) return next();
+  if (verifyAdminToken(t) || (t && adminTokens.has(t))) return next();
   res.status(401).json({ error: 'Admin authentication required.' });
 }
 
@@ -381,7 +407,7 @@ app.get('/api/scrape-stream', async (req, res) => {
   let aborted = false; req.on('close', () => { aborted = true; });
   try {
     const { adminToken, hrToken, contestId } = req.query;
-    if (!adminToken || !adminTokens.has(adminToken)) { send('failed', { error: 'Admin auth required.' }); return res.end(); }
+    if (!adminToken || (!verifyAdminToken(adminToken) && !adminTokens.has(adminToken))) { send('failed', { error: 'Admin auth required.' }); return res.end(); }
     const session = hrSessions.get(hrToken);
     if (!session) { send('failed', { error: 'Connect your HackerRank account first.' }); return res.end(); }
     const ct = await db.getContest(contestId);
@@ -427,7 +453,7 @@ app.get('/api/sync-all-stream', async (req, res) => {
   let aborted = false; req.on('close', () => { aborted = true; });
   try {
     const { adminToken, hrToken } = req.query;
-    if (!adminToken || !adminTokens.has(adminToken)) { send('failed', { error: 'Admin auth required.' }); return res.end(); }
+    if (!adminToken || (!verifyAdminToken(adminToken) && !adminTokens.has(adminToken))) { send('failed', { error: 'Admin auth required.' }); return res.end(); }
     const session = hrSessions.get(hrToken);
     if (!session) { send('failed', { error: 'Connect your HackerRank account first.' }); return res.end(); }
     const contests = (await db.listContests()).filter((c) => c.slug);
