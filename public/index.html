@@ -130,6 +130,20 @@
 
       <!-- COLLEGES -->
       <section id="panel-colleges" class="panel">
+        <div class="card" style="background:linear-gradient(to right, var(--surface), var(--surface2));border:1px solid var(--border)">
+          <div class="card-head" style="margin:0">
+            <div>
+              <h3 style="margin:0">⚡ Quick Actions & Bulk Export</h3>
+              <p class="muted" style="margin:3px 0 0">Generate multi-sheet Excel reports or copy all shareable links across colleges.</p>
+            </div>
+            <div class="form-row" style="margin:0;gap:8px">
+              <button id="bulk-export-all-colleges-btn" class="primary sm" title="Download Excel workbook containing summary and sheets for all colleges">📥 Bulk Export All Colleges</button>
+              <button id="bulk-copy-links-btn" class="ghost sm" title="Copy all college & course share links to clipboard">📋 Copy All Share Links</button>
+            </div>
+          </div>
+          <div id="bulk-action-status" class="status" style="margin-top:8px"></div>
+        </div>
+
         <div class="card">
           <h3>Add a college</h3>
           <p class="muted">Set the student access code (students type it to log into the student view). After adding, add its course link(s) below.</p>
@@ -140,14 +154,26 @@
           </div>
           <div id="c-status" class="status"></div>
         </div>
+
         <div class="card">
-          <h3>Colleges <span class="muted" id="c-count"></span></h3>
+          <div class="card-head">
+            <h3>Colleges <span class="muted" id="c-count"></span></h3>
+            <div class="form-row" style="margin:0">
+              <input id="c-search" placeholder="Search college…" style="flex:0 0 200px" />
+            </div>
+          </div>
           <p class="muted">For security the saved code isn't shown — you can only overwrite it.</p>
           <div class="table-scroll"><table id="colleges-table" class="data-table"></table></div>
+          <div id="c-pager" class="pager"></div>
         </div>
 
         <div class="card">
-          <h3>Course links for a college</h3>
+          <div class="card-head">
+            <h3>Course links for a college</h3>
+            <div class="form-row" style="margin:0">
+              <input id="cc-search" placeholder="Search course…" style="flex:0 0 200px" />
+            </div>
+          </div>
           <p class="muted">Add one or more HackerRank course links to a college. Each becomes a course you can sync (Dashboard) and tag (Topics).</p>
           <div class="form-row">
             <label class="inline-label" style="flex:1">College: <select id="cc-college" style="flex:1"></select></label>
@@ -163,6 +189,7 @@
           </div>
           <div id="cc-status" class="status"></div>
           <div class="table-scroll"><table id="cc-table" class="data-table"></table></div>
+          <div id="cc-pager" class="pager"></div>
         </div>
       </section>
 
@@ -185,6 +212,7 @@
             <input id="daily-f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
           </div>
           <div class="table-scroll"><table id="daily-table" class="data-table"></table></div>
+          <div id="daily-table-pager" class="pager"></div>
         </div>
       </section>
 
@@ -292,19 +320,73 @@
           <div id="att-sheet-tabs" class="form-row" style="margin:0 0 8px;flex-wrap:wrap;gap:6px"></div>
           <div class="form-row" style="margin:0 0 8px"><input id="att-search" placeholder="Search…" style="flex:0 0 240px" /><span id="att-count" class="muted"></span></div>
           <div class="table-scroll" style="max-height:64vh"><table id="att-table" class="data-table"></table></div>
+          <div id="att-pager" class="pager"></div>
         </div>
       </section>
     </main>
   </div>
 
+  <!-- Edit Student Modal -->
+  <div id="edit-student-modal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="card-head" style="margin-bottom:8px">
+        <h3 style="margin:0">✏️ Edit Student Data</h3>
+        <button id="edit-st-close" class="ghost sm" title="Close">✕</button>
+      </div>
+      <input type="hidden" id="edit-st-id" />
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">Name:
+          <input id="edit-st-name" placeholder="Student name" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">HackerRank Username:
+          <input id="edit-st-username" placeholder="HackerRank username" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">Register No:
+          <input id="edit-st-reg" placeholder="Register number" style="flex:1" />
+        </label>
+        <label class="inline-label" style="flex:1">Email:
+          <input id="edit-st-email" type="email" placeholder="Email" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">College:
+          <select id="edit-st-college" style="flex:1"></select>
+        </label>
+        <label class="inline-label" style="flex:1">Campus:
+          <input id="edit-st-campus" placeholder="Campus" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">Dept:
+          <input id="edit-st-dept" placeholder="Department" style="flex:1" />
+        </label>
+        <label class="inline-label" style="flex:1">Section:
+          <input id="edit-st-sec" placeholder="Section" style="flex:1" />
+        </label>
+        <label class="inline-label" style="flex:1">Year:
+          <input id="edit-st-year" placeholder="Year" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row" style="margin-top:14px;justify-content:flex-end;gap:8px">
+        <button id="edit-st-cancel" class="ghost">Cancel</button>
+        <button id="edit-st-save" class="primary">Save Changes</button>
+      </div>
+      <div id="edit-st-status" class="status" style="margin-top:8px"></div>
+    </div>
+  </div>
+
   <!-- Student performance modal -->
   <div id="perf-modal" class="modal-overlay hidden">
     <div class="modal wide">
-      <div class="card-head" style="margin-bottom:6px"><h3 id="perf-title"></h3><button id="perf-close" class="ghost sm">✕</button></div>
+      <div class="card-head"><h3 id="perf-title"></h3><button id="perf-close" class="ghost sm" title="Close">✕</button></div>
       <div id="perf-meta" class="muted"></div>
-      <div id="perf-stats" class="summary-grid" style="margin:14px 0"></div>
-      <div id="perf-topics" style="margin-bottom:14px"></div>
-      <div class="table-scroll" style="max-height:50vh"><table id="perf-table" class="data-table"></table></div>
+      <div id="perf-stats"></div>
+      <div id="perf-topics"></div>
+      <div class="table-scroll"><table id="perf-table" class="data-table"></table></div>
     </div>
   </div>
 
@@ -335,13 +417,32 @@
     </div>
   </div>
 
+  <!-- Daily questions completed modal -->
+  <div id="daily-modal" class="modal-overlay hidden">
+    <div class="modal wide">
+      <div class="card-head" style="margin-bottom:6px">
+        <div>
+          <h3 id="daily-modal-title" style="margin:0"></h3>
+          <div id="daily-modal-subtitle" class="muted" style="margin-top:2px"></div>
+        </div>
+        <button id="daily-modal-close" class="ghost sm">✕</button>
+      </div>
+      <div class="form-row" style="margin:0 0 10px">
+        <input id="daily-modal-search" placeholder="Search student / username / dept / sec…" style="max-width:320px" />
+        <span id="daily-modal-count" class="muted"></span>
+      </div>
+      <div class="table-scroll" style="max-height:60vh"><table id="daily-modal-table" class="data-table"></table></div>
+      <div id="daily-pager" class="pager"></div>
+    </div>
+  </div>
+
   <!-- Connect HR modal -->
   <div id="connect-modal" class="modal-overlay hidden">
     <div class="modal">
       <h3>Connect your HackerRank account</h3>
-      <p class="muted">Used only to scrape course leaderboards. Not stored to disk.</p>
-      <div class="form-row"><input id="hr-email" type="email" placeholder="HackerRank email" /></div>
-      <div class="form-row"><input id="hr-pass" type="password" placeholder="Password" /></div>
+      <p class="muted">Used to scrape course leaderboards. Leave blank to connect with <code>.env</code> credentials automatically.</p>
+      <div class="form-row"><input id="hr-email" type="email" placeholder="HackerRank email (optional if in .env)" /></div>
+      <div class="form-row"><input id="hr-pass" type="password" placeholder="Password (optional if in .env)" /></div>
       <div class="form-row"><button id="hr-connect-btn" style="flex:1">Connect</button><button id="hr-cancel" class="ghost">Cancel</button></div>
       <div id="hr-connect-status" class="status"></div>
     </div>

@@ -11,6 +11,7 @@ function splitTitle(name) { const m = String(name).split(/\s+[–—-]\s+/); ret
 
 let dashData = null, dashTopics = {}, dashCats = {}, roster = [], dailyData = null;
 let studentsPage = 1; const STUDENTS_PAGE = 50;
+let currentContestId = '';
 let taRows = [];
 let compDist = [], compTotal = 0, compTotalQ = 0, compMax = 1, compPage = 1; const COMP_PAGE = 20;
 let cbRows = [], cbPage = 1; const CB_PAGE = 20;
@@ -53,6 +54,7 @@ async function boot() {
       $('view-title').textContent = d.college; document.title = d.college;
       const contests = d.contests || [];
       if (!contests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
+      if (contests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
       const sel = $('view-contest'); $('view-contest-wrap').classList.remove('hidden');
       sel.innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}${c.hasLink ? '' : ' (no link)'}</option>`).join('');
       sel.onchange = () => loadCollegeContest(sel.value);
@@ -66,6 +68,7 @@ async function boot() {
   } catch (e) { $('view-status').textContent = e.message; $('view-status').className = 'status err'; }
 }
 async function loadCollegeContest(contestId) {
+  currentContestId = String(contestId);
   $('view-status').textContent = 'Loading…'; $('view-status').className = 'status info';
   try {
     const res = await fetch('/api/college/' + token + '/contest/' + contestId);
@@ -74,6 +77,103 @@ async function loadCollegeContest(contestId) {
     applyPayload(d);
   } catch (e) { $('view-status').textContent = e.message; $('view-status').className = 'status err'; }
 }
+
+// ---------------- Read-only sync ----------------
+function syncReadDashboard(syncAll = false) {
+  const syncBtn = $('view-sync-btn');
+  const syncAllBtn = $('view-sync-all-btn');
+  if (syncBtn) syncBtn.disabled = true;
+  if (syncAllBtn) syncAllBtn.disabled = true;
+
+  const prog = $('view-progress');
+  const progLab = $('view-prog-lab');
+  const progFill = $('view-prog-fill');
+  if (prog) prog.classList.remove('hidden');
+  if (progLab) progLab.textContent = 'Starting sync…';
+  if (progFill) progFill.style.width = '0%';
+
+  const stat = $('view-status');
+  stat.textContent = syncAll ? 'Syncing all courses for this college…' : 'Syncing course…';
+  stat.className = 'status info';
+
+  let url;
+  if (isCollege) {
+    url = '/api/college/' + token + '/sync-stream' + (syncAll ? '?contestId=all' : (currentContestId ? '?contestId=' + currentContestId : ''));
+  } else {
+    url = '/api/shared/' + token + '/sync-stream';
+  }
+
+  const stop = () => {
+    if (syncBtn) syncBtn.disabled = false;
+    if (syncAllBtn) syncAllBtn.disabled = false;
+  };
+
+  const es = new EventSource(url);
+  es.addEventListener('start', (ev) => {
+    const d = JSON.parse(ev.data);
+    stat.textContent = `Syncing ${d.total} course(s) in ${d.college}…`;
+  });
+  es.addEventListener('contest', (ev) => {
+    const p = JSON.parse(ev.data);
+    if (progLab) progLab.textContent = `(${p.index}/${p.total}) ${p.name}: starting…`;
+    if (progFill) progFill.style.width = Math.round(((p.index - 1) / p.total) * 100) + '%';
+  });
+  es.addEventListener('progress', (ev) => {
+    const p = JSON.parse(ev.data);
+    if (p.totalUsers != null) {
+      if (progLab) progLab.textContent = `(${p.index}/${p.total}) ${p.name}: ${p.completed}/${p.totalUsers} users`;
+      const frac = p.totalUsers ? Math.min(1, p.completed / p.totalUsers) : 0;
+      if (progFill) progFill.style.width = Math.round((((p.index - 1) + frac) / p.total) * 100) + '%';
+    } else {
+      if (progLab) progLab.textContent = p.phase === 'leaderboard' ? `Fetching leaderboard… ${p.completed}` : `${p.completed} / ${p.total} users`;
+      if (progFill) progFill.style.width = (p.total ? Math.round((p.completed / p.total) * 100) : 8) + '%';
+    }
+  });
+  es.addEventListener('contest-done', (ev) => {
+    const p = JSON.parse(ev.data);
+    if (progFill) progFill.style.width = Math.round((p.index / p.total) * 100) + '%';
+  });
+  es.addEventListener('contest-failed', (ev) => {
+    const p = JSON.parse(ev.data);
+    console.warn('Contest sync failed:', p);
+  });
+  es.addEventListener('done', (ev) => {
+    es.close();
+    stop();
+    if (progFill) progFill.style.width = '100%';
+    const d = JSON.parse(ev.data);
+    if (d.summary) {
+      stat.textContent = `Synced successfully — ${d.summary.totalUsers} users, ${d.summary.totalQuestions} questions.`;
+      stat.className = 'status ok';
+    } else {
+      const msg = `Synced ${d.ok} of ${d.total} course(s).` + (d.failures && d.failures.length ? ` ${d.failures.length} failed.` : '');
+      stat.textContent = msg;
+      stat.className = d.failures && d.failures.length ? 'status err' : 'status ok';
+    }
+    setTimeout(() => { if (prog) prog.classList.add('hidden'); }, 2000);
+    // Refresh data
+    if (isCollege) {
+      if (currentContestId) loadCollegeContest(currentContestId);
+    } else {
+      fetch('/api/shared/' + token).then((r) => r.json()).then(applyPayload).catch((e) => console.error(e));
+    }
+  });
+  es.addEventListener('failed', (ev) => {
+    es.close();
+    stop();
+    if (prog) prog.classList.add('hidden');
+    const err = JSON.parse(ev.data).error || 'Sync failed';
+    stat.textContent = err;
+    stat.className = 'status err';
+  });
+  es.onerror = () => {
+    es.close();
+    stop();
+    if (prog) prog.classList.add('hidden');
+  };
+}
+$('view-sync-btn')?.addEventListener('click', () => syncReadDashboard(false));
+$('view-sync-all-btn')?.addEventListener('click', () => syncReadDashboard(true));
 
 function joinedRows() {
   const byUser = new Map((dashData?.users || []).map((u) => [u.username.toLowerCase(), u]));
@@ -307,18 +407,56 @@ $('perf-close').addEventListener('click', () => $('perf-modal').classList.add('h
 $('perf-modal').addEventListener('click', (e) => { if (e.target.id === 'perf-modal') $('perf-modal').classList.add('hidden'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay').forEach((m) => m.classList.add('hidden')); });
 function openPerf(hrUsername) {
-  const r = joinedRows().find((x) => x.hrUsername.toLowerCase() === hrUsername.toLowerCase()); if (!r) return;
-  const u = dashData?.users.find((x) => x.username.toLowerCase() === hrUsername.toLowerCase());
-  $('perf-title').textContent = r.name || hrUsername;
-  $('perf-meta').innerHTML = [`@${esc(hrUsername)}`, r.registerNo && `Reg: ${esc(r.registerNo)}`, r.department && esc(r.department), r.section && `Sec ${esc(r.section)}`, r.year && `Year ${esc(r.year)}`].filter(Boolean).join(' · ');
-  if (!u) { $('perf-stats').innerHTML = `<div class="stat"><div class="value">—</div><div class="label">No course data</div></div>`; $('perf-topics').innerHTML = `<p class="muted">Did not appear in the course.</p>`; $('perf-table').innerHTML = ''; $('perf-modal').classList.remove('hidden'); return; }
+  if (!hrUsername) return;
+  const username = String(hrUsername).trim();
+  const r = (dailyData?.students || []).find((x) => x.hrUsername && x.hrUsername.toLowerCase() === username.toLowerCase()) ||
+            joinedRows().find((x) => x.hrUsername && x.hrUsername.toLowerCase() === username.toLowerCase()) ||
+            roster.find((x) => x.hrUsername && x.hrUsername.toLowerCase() === username.toLowerCase()) ||
+            { name: username, hrUsername: username };
+  const u = dashData?.users?.find((x) => x.username && x.username.toLowerCase() === username.toLowerCase());
+
+  $('perf-title').textContent = r.name || username;
+  $('perf-meta').innerHTML = [
+    `@${esc(username)}`,
+    r.registerNo && `Reg: ${esc(r.registerNo)}`,
+    r.campus && esc(r.campus),
+    r.department && esc(r.department),
+    r.section && `Sec ${esc(r.section)}`,
+    r.year && `Year ${esc(r.year)}`,
+  ].filter(Boolean).join(' · ');
+
+  if (!dashData || !u) {
+    $('perf-stats').innerHTML = `<div class="stat"><div class="value">—</div><div class="label">No course data</div></div>`;
+    $('perf-topics').innerHTML = `<p class="muted">${dashData ? 'This student did not appear in the course scrape.' : 'No course synced yet for this college.'}</p>`;
+    $('perf-table').innerHTML = '';
+    $('perf-modal').classList.remove('hidden');
+    return;
+  }
+
   const totalQ = dashData.summary.totalQuestions;
   const rank = dashData.users.slice().sort((a, b) => b.computedScore - a.computedScore).findIndex((x) => x.username === u.username) + 1;
-  $('perf-stats').innerHTML = [['Solved', `${u.solved}/${totalQ}`], ['Score', u.computedScore], ['Completion', Math.round((u.solved / totalQ) * 100) + '%'], ['Attempted', u.attempted], ['Course rank', `#${rank}`]]
-    .map(([l, v]) => `<div class="stat"><div class="value">${v}</div><div class="label">${l}</div></div>`).join('');
+  $('perf-stats').innerHTML = [
+    ['Solved', `${u.solved}/${totalQ}`],
+    ['Score', u.computedScore],
+    ['Completion', Math.round((u.solved / totalQ) * 100) + '%'],
+    ['Attempted', u.attempted],
+    ['Course rank', rank > 0 ? `#${rank}` : '—'],
+  ].map(([l, v]) => `<div class="stat"><div class="value">${v}</div><div class="label">${l}</div></div>`).join('');
+
   const tm = new Map();
-  for (const q of dashData.questions) { const t = dashTopics[q.name] || splitTitle(q.name).tag || 'Other'; if (!tm.has(t)) tm.set(t, { total: 0, solved: 0 }); const e = tm.get(t); e.total++; if (u.questionStatus[q.name]?.solved) e.solved++; }
-  $('perf-topics').innerHTML = `<div class="muted" style="margin-bottom:6px">By topic <span style="font-size:11px">(click a topic to filter the questions below)</span></div>` + Array.from(tm.entries()).map(([t, e]) => { const cls = e.solved === e.total ? 'solved' : e.solved > 0 ? 'attempted' : 'none'; return `<span class="topic-tag" data-topic="${esc(t)}" style="cursor:pointer"><b>${esc(t)}</b> <span class="badge ${cls}">${e.solved}/${e.total}</span></span>`; }).join('');
+  for (const q of dashData.questions) {
+    const t = dashTopics[q.name] || splitTitle(q.name).tag || 'Other';
+    if (!tm.has(t)) tm.set(t, { total: 0, solved: 0 });
+    const e = tm.get(t);
+    e.total++;
+    if (u.questionStatus[q.name]?.solved) e.solved++;
+  }
+  $('perf-topics').innerHTML = `<div class="muted" style="margin-bottom:6px">By topic <span style="font-size:11px">(click a topic to filter the questions below)</span></div>` +
+    Array.from(tm.entries()).map(([t, e]) => {
+      const cls = e.solved === e.total ? 'solved' : e.solved > 0 ? 'attempted' : 'none';
+      return `<span class="topic-tag" data-topic="${esc(t)}" style="cursor:pointer"><b>${esc(t)}</b> <span class="badge ${cls}">${e.solved}/${e.total}</span></span>`;
+    }).join('');
+
   perfState = { u };
   perfTopicFilter = null;
   renderPerfTable();
@@ -351,12 +489,16 @@ document.querySelectorAll('#view-tabs .tab').forEach((b) => b.addEventListener('
   if (t === 'attendance') loadSharedAttendance();
 }));
 
-// ---- Attendance (all tabs, read-only) ----
+// ---------------- Attendance (Google Sheet) ----------------
 let attSheets = [], attSheetIdx = 0, attLoaded = false;
+let attPage = 1;
+const ATT_PAGE = 50;
+
 function renderAttSheetTabs() {
   const el = $('att-sheet-tabs');
   if (attSheets.length <= 1) { el.innerHTML = ''; return; }
-  el.innerHTML = attSheets.map((s, i) => `<button class="tab${i === attSheetIdx ? ' active' : ''}" data-idx="${i}" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px">${esc(s.name)} <span class="muted">(${s.rows.length})</span></button>`).join('');
+  el.innerHTML = attSheets.map((s, i) =>
+    `<button class="tab${i === attSheetIdx ? ' active' : ''}" data-idx="${i}" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px">${esc(s.name)} <span class="muted">(${s.rows.length})</span></button>`).join('');
 }
 function attText(v) { return v && typeof v === 'object' ? (v.text || v.url || '') : String(v ?? ''); }
 function attCell(v) {
@@ -370,16 +512,36 @@ function renderAttendance() {
   const sheet = attSheets[attSheetIdx];
   const q = $('att-search').value.trim().toLowerCase();
   const cols = sheet ? sheet.columns : [];
-  const rows = sheet ? sheet.rows.filter((r) => !q || r.some((c) => attText(c).toLowerCase().includes(q))) : [];
-  $('att-count').textContent = sheet ? `${rows.length} row${rows.length === 1 ? '' : 's'}${q ? ' (filtered)' : ''}` : '';
-  if (!cols.length) { $('att-table').innerHTML = sheet ? '<tbody><tr><td class="muted">This tab is empty.</td></tr></tbody>' : ''; return; }
+  const allRows = sheet ? sheet.rows.filter((r) => !q || r.some((c) => attText(c).toLowerCase().includes(q))) : [];
+  $('att-count').textContent = sheet ? `${allRows.length} row${allRows.length === 1 ? '' : 's'}${q ? ' (filtered)' : ''}` : '';
+  if (!cols.length) {
+    $('att-table').innerHTML = sheet ? '<tbody><tr><td class="muted">This tab is empty.</td></tr></tbody>' : '';
+    if ($('att-pager')) $('att-pager').innerHTML = '';
+    return;
+  }
+  const pages = Math.max(1, Math.ceil(allRows.length / ATT_PAGE));
+  if (attPage > pages) attPage = pages;
+  const start = (attPage - 1) * ATT_PAGE;
+  const rows = allRows.slice(start, start + ATT_PAGE);
+
   $('att-table').innerHTML =
     `<thead><tr><th class="num">#</th>${cols.map((c) => `<th>${attCell(c)}</th>`).join('')}</tr></thead><tbody>` +
-    (rows.length ? rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${cols.map((_, j) => `<td>${attCell(r[j])}</td>`).join('')}</tr>`).join('')
+    (rows.length ? rows.map((r, i) => `<tr><td class="num">${start + i + 1}</td>${cols.map((_, j) => `<td>${attCell(r[j])}</td>`).join('')}</tr>`).join('')
       : `<tr><td colspan="${cols.length + 1}" class="muted">No rows.</td></tr>`) + `</tbody>`;
+
+  const from = allRows.length ? start + 1 : 0;
+  if ($('att-pager')) {
+    $('att-pager').innerHTML = allRows.length > ATT_PAGE
+      ? `<button class="ghost sm" id="att-prev" ${attPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + ATT_PAGE, allRows.length)} of ${allRows.length} · page ${attPage}/${pages}</span><button class="ghost sm" id="att-next" ${attPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+    if (allRows.length > ATT_PAGE) {
+      $('att-prev')?.addEventListener('click', () => { if (attPage > 1) { attPage--; renderAttendance(); } });
+      $('att-next')?.addEventListener('click', () => { if (attPage < pages) { attPage++; renderAttendance(); } });
+    }
+  }
 }
-$('att-sheet-tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-idx]'); if (!b) return; attSheetIdx = Number(b.dataset.idx); renderAttendance(); });
-$('att-search').addEventListener('input', renderAttendance);
+$('att-sheet-tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-idx]'); if (!b) return; attSheetIdx = Number(b.dataset.idx); attPage = 1; renderAttendance(); });
+$('att-search').addEventListener('input', () => { attPage = 1; renderAttendance(); });
 async function loadSharedAttendance() {
   if (attLoaded) return;
   attLoaded = true;
@@ -387,7 +549,7 @@ async function loadSharedAttendance() {
   try {
     const res = await fetch(attUrl);
     const d = await res.json();
-    attSheets = d.sheets || []; attSheetIdx = 0;
+    attSheets = d.sheets || []; attSheetIdx = 0; attPage = 1;
     renderAttendance();
     if (d.error) $('att-note').textContent = '· ' + d.error;
     else if (!attSheets.length) $('att-note').textContent = '· no attendance sheet linked for this college';
@@ -396,12 +558,16 @@ async function loadSharedAttendance() {
 }
 
 // ---- Daily questions completed ----
+let dailyPage = 1;
+const DAILY_PAGE = 30;
+
 function fmtDay(iso) { const d = new Date(iso + 'T00:00:00'); return isNaN(d) ? iso : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); }
 function renderDaily() {
   const t = $('daily-table');
   if (!dailyData || !dailyData.days || !dailyData.days.length) {
     t.innerHTML = `<tbody><tr><td class="muted">No daily snapshots yet — this course needs to be synced on at least one day to build history.</td></tr></tbody>`;
     $('daily-note').textContent = '';
+    if ($('daily-table-pager')) $('daily-table-pager').innerHTML = '';
     return;
   }
   const all = dailyData.students || [];
@@ -414,20 +580,255 @@ function renderDaily() {
   }
   drawDailyTable();
 }
+function getFilteredDailyStudents() {
+  if (!dailyData || !dailyData.students) return [];
+  const f = {
+    campus: $('daily-f-campus')?.value || '',
+    department: $('daily-f-department')?.value || '',
+    section: $('daily-f-section')?.value || '',
+    year: $('daily-f-year')?.value || '',
+    q: ($('daily-f-search')?.value || '').trim().toLowerCase(),
+  };
+  return dailyData.students.filter((s) =>
+    (!f.campus || s.campus === f.campus) &&
+    (!f.department || s.department === f.department) &&
+    (!f.section || s.section === f.section) &&
+    (!f.year || s.year === f.year) &&
+    (!f.q || (s.name || '').toLowerCase().includes(f.q) || (s.hrUsername || '').toLowerCase().includes(f.q))
+  );
+}
+
 function drawDailyTable() {
   if (!dailyData || !dailyData.days) return;
   const t = $('daily-table');
   const { days } = dailyData;
-  const f = { campus: $('daily-f-campus').value, department: $('daily-f-department').value, section: $('daily-f-section').value, year: $('daily-f-year').value, q: $('daily-f-search').value.trim().toLowerCase() };
-  const students = (dailyData.students || []).filter((s) => (!f.campus || s.campus === f.campus) && (!f.department || s.department === f.department) && (!f.section || s.section === f.section) && (!f.year || s.year === f.year)
-    && (!f.q || (s.name || '').toLowerCase().includes(f.q) || (s.hrUsername || '').toLowerCase().includes(f.q)));
-  $('daily-note').textContent = `· ${students.length}${students.length !== (dailyData.students || []).length ? ' of ' + (dailyData.students || []).length : ''} students · ${days.length} day(s)`;
+  const allStudents = getFilteredDailyStudents();
+  $('daily-note').textContent = `· ${allStudents.length}${allStudents.length !== (dailyData.students || []).length ? ' of ' + (dailyData.students || []).length : ''} students · ${days.length} day(s)`;
+
+  // Compute stats per day for the filtered students
+  const dayStats = days.map((day, idx) => {
+    const doneList = allStudents.filter((s) => (s.daily[idx] || 0) > 0);
+    const totalQ = allStudents.reduce((sum, s) => sum + (s.daily[idx] || 0), 0);
+    return { count: doneList.length, totalQ };
+  });
+  const totalWithSolves = allStudents.filter((s) => (s.total || 0) > 0).length;
+
+  const total = allStudents.length;
+  const pages = Math.max(1, Math.ceil(total / DAILY_PAGE));
+  if (dailyPage > pages) dailyPage = pages;
+  const start = (dailyPage - 1) * DAILY_PAGE;
+  const students = allStudents.slice(start, start + DAILY_PAGE);
+
   t.innerHTML =
-    `<thead><tr><th class="sticky-name">Student</th>${days.map((day) => `<th class="num">${esc(fmtDay(day))}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>` +
-    (students.length ? students.map((s) => `<tr><td class="sticky-name">${esc(s.name || s.hrUsername)}</td>${s.daily.map((n) => `<td class="num">${n ? n : '<span class="muted">·</span>'}</td>`).join('')}<td class="num">${s.total}</td></tr>`).join('')
-      : `<tr><td class="muted">No students match these filters.</td></tr>`) + `</tbody>`;
+    `<thead>` +
+    `<tr>` +
+    `<th class="sticky-name">Student</th>` +
+    days.map((day, idx) =>
+      `<th class="num daily-col-hdr" data-day-idx="${idx}" title="Click to view all students who completed questions on ${esc(fmtDay(day))}" style="cursor:pointer">` +
+      `<div>${esc(fmtDay(day))}</div>` +
+      `<span class="chip" style="background:rgba(46,164,79,.18);color:var(--accent);font-size:.72rem;margin-top:2px;display:inline-block">${dayStats[idx].count} done</span>` +
+      `</th>`
+    ).join('') +
+    `<th class="num daily-col-hdr" data-day-idx="all" title="Click to view all active students" style="cursor:pointer">` +
+    `<div>Total</div>` +
+    `<span class="chip" style="background:rgba(31,111,235,.18);color:var(--accent2);font-size:.72rem;margin-top:2px;display:inline-block">${totalWithSolves} active</span>` +
+    `</th>` +
+    `</tr>` +
+    `<tr class="daily-summary-row" style="background:var(--surface2)">` +
+    `<td class="sticky-name" style="background:var(--surface2)"><b>Students Completed</b></td>` +
+    days.map((day, idx) =>
+      `<td class="num" style="padding:6px 10px">` +
+      (dayStats[idx].count > 0
+        ? `<button class="ghost sm daily-summary-btn" data-day-idx="${idx}" title="View ${dayStats[idx].count} student(s) who completed questions on ${esc(fmtDay(day))}" style="padding:2px 8px;font-size:.78rem;font-weight:700;color:var(--accent);border-color:rgba(46,164,79,.4);cursor:pointer">${dayStats[idx].count} done</button>`
+        : `<span class="muted">0</span>`) +
+      `</td>`
+    ).join('') +
+    `<td class="num" style="padding:6px 10px">` +
+    (totalWithSolves > 0
+      ? `<button class="ghost sm daily-summary-btn" data-day-idx="all" title="View all ${totalWithSolves} active student(s)" style="padding:2px 8px;font-size:.78rem;font-weight:700;color:var(--accent2);border-color:rgba(31,111,235,.4);cursor:pointer">${totalWithSolves} active</button>`
+      : `<span class="muted">0</span>`) +
+    `</td>` +
+    `</tr>` +
+    `</thead>` +
+    `<tbody>` +
+    (students.length ? students.map((s) =>
+      `<tr>` +
+      `<td class="sticky-name"><a class="user-link" data-user="${esc(s.hrUsername)}" title="Click to view student questions">${esc(s.name || s.hrUsername)}</a></td>` +
+      s.daily.map((n) =>
+        `<td class="num">` +
+        (n
+          ? `<a class="user-link" data-user="${esc(s.hrUsername)}" style="font-weight:700;color:var(--accent);cursor:pointer" title="Click to view questions solved by ${esc(s.name || s.hrUsername)}">${n}</a>`
+          : `<span class="muted">·</span>`) +
+        `</td>`
+      ).join('') +
+      `<td class="num"><a class="user-link" data-user="${esc(s.hrUsername)}" title="Click to view student questions">${s.total}</a></td>` +
+      `</tr>`
+    ).join('')
+      : `<tr><td colspan="${days.length + 2}" class="muted">No students match these filters.</td></tr>`) +
+    `</tbody>`;
+
+  const from = total ? start + 1 : 0;
+  if ($('daily-table-pager')) {
+    $('daily-table-pager').innerHTML = total > DAILY_PAGE
+      ? `<button class="ghost sm" id="dt-prev" ${dailyPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + DAILY_PAGE, total)} of ${total} · page ${dailyPage}/${pages}</span><button class="ghost sm" id="dt-next" ${dailyPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+    if (total > DAILY_PAGE) {
+      $('dt-prev')?.addEventListener('click', () => { if (dailyPage > 1) { dailyPage--; drawDailyTable(); } });
+      $('dt-next')?.addEventListener('click', () => { if (dailyPage < pages) { dailyPage++; drawDailyTable(); } });
+    }
+  }
 }
-['daily-f-campus', 'daily-f-department', 'daily-f-section', 'daily-f-year'].forEach((id) => $(id).addEventListener('change', drawDailyTable));
-$('daily-f-search').addEventListener('input', drawDailyTable);
+['daily-f-campus', 'daily-f-department', 'daily-f-section', 'daily-f-year'].forEach((id) => $(id).addEventListener('change', () => { dailyPage = 1; drawDailyTable(); }));
+$('daily-f-search').addEventListener('input', () => { dailyPage = 1; drawDailyTable(); });
+
+// ---------- Daily popup modal logic ----------
+let dailyModalRows = [], dailyModalPage = 1, dailyModalSelectedDayIdx = null;
+const DAILY_MODAL_PAGE = 20;
+
+function openDailyModal(dayIdx) {
+  if (!dailyData || !dailyData.days) return;
+  dailyModalSelectedDayIdx = dayIdx;
+  const isAll = dayIdx === 'all';
+  const dayStr = isAll ? null : dailyData.days[Number(dayIdx)];
+  const students = getFilteredDailyStudents();
+
+  if (isAll) {
+    dailyModalRows = students
+      .filter((s) => (s.total || 0) > 0)
+      .map((s) => ({
+        ...s,
+        doneCount: (s.daily || []).reduce((a, b) => a + (b || 0), 0),
+      }))
+      .sort((a, b) => b.total - a.total || b.doneCount - a.doneCount);
+
+    const totalWindowQ = dailyModalRows.reduce((sum, s) => sum + s.doneCount, 0);
+    $('daily-modal-title').textContent = `⚡ ${dailyModalRows.length} active student(s)`;
+    $('daily-modal-subtitle').textContent = `Active students with solves · Solved in ${dailyData.days.length}-day window: ${totalWindowQ}`;
+  } else {
+    const idx = Number(dayIdx);
+    dailyModalRows = students
+      .filter((s) => (s.daily[idx] || 0) > 0)
+      .map((s) => ({
+        ...s,
+        doneCount: s.daily[idx] || 0,
+      }))
+      .sort((a, b) => b.doneCount - a.doneCount || b.total - a.total);
+
+    const formattedDay = fmtDay(dayStr);
+    const totalQ = dailyModalRows.reduce((sum, s) => sum + s.doneCount, 0);
+    $('daily-modal-title').textContent = `⚡ ${dailyModalRows.length} student(s) completed questions on ${formattedDay}`;
+    $('daily-modal-subtitle').textContent = `Date: ${dayStr} · Total questions solved on this day: ${totalQ}`;
+  }
+
+  $('daily-modal-search').value = '';
+  dailyModalPage = 1;
+  renderDailyModalPage();
+  $('daily-modal').classList.remove('hidden');
+}
+
+function renderDailyModalPage() {
+  const q = ($('daily-modal-search')?.value || '').trim().toLowerCase();
+  const filtered = dailyModalRows.filter(
+    (s) =>
+      !q ||
+      (s.name || '').toLowerCase().includes(q) ||
+      (s.hrUsername || '').toLowerCase().includes(q) ||
+      (s.department || '').toLowerCase().includes(q) ||
+      (s.section || '').toLowerCase().includes(q) ||
+      (s.campus || '').toLowerCase().includes(q)
+  );
+
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / DAILY_MODAL_PAGE));
+  if (dailyModalPage > pages) dailyModalPage = pages;
+  const start = (dailyModalPage - 1) * DAILY_MODAL_PAGE;
+  const slice = filtered.slice(start, start + DAILY_MODAL_PAGE);
+
+  const isAll = dailyModalSelectedDayIdx === 'all';
+  const countColTitle = isAll ? 'Window Solved' : 'Completed on Date';
+
+  $('daily-modal-table').innerHTML =
+    `<thead><tr>` +
+    `<th style="width:40px">#</th>` +
+    `<th>Student</th>` +
+    `<th>HR username</th>` +
+    `<th>Campus</th>` +
+    `<th>Dept</th>` +
+    `<th>Section</th>` +
+    `<th>Year</th>` +
+    `<th class="num">${countColTitle}</th>` +
+    `<th class="num">Total Solved</th>` +
+    `<th style="width:110px;text-align:center">Questions</th>` +
+    `</tr></thead><tbody>` +
+    (slice.length
+      ? slice
+          .map(
+            (s, idx) =>
+              `<tr>` +
+              `<td class="num">${start + idx + 1}</td>` +
+              `<td><a class="user-link view-perf-link" data-user="${esc(s.hrUsername)}" title="Click to view question completion breakdown">${esc(s.name || s.hrUsername)}</a></td>` +
+              `<td><a class="user-link view-perf-link" data-user="${esc(s.hrUsername)}">${esc(s.hrUsername || '—')}</a></td>` +
+              `<td>${esc(s.campus || '—')}</td>` +
+              `<td>${esc(s.department || '—')}</td>` +
+              `<td>${esc(s.section || '—')}</td>` +
+              `<td>${esc(s.year || '—')}</td>` +
+              `<td class="num"><b><span class="chip" style="background:rgba(46,164,79,.15);color:var(--accent);font-size:.82rem">+${s.doneCount}</span></b></td>` +
+              `<td class="num"><b>${s.total}</b></td>` +
+              `<td style="text-align:center"><button class="ghost sm view-perf-btn" data-user="${esc(s.hrUsername)}" style="padding:3px 8px;font-size:.76rem">View 📊</button></td>` +
+              `</tr>`
+          )
+          .join('')
+      : `<tr><td colspan="10" class="muted">No students found.</td></tr>`) +
+    `</tbody>`;
+
+  const from = total ? start + 1 : 0;
+  $('daily-modal-count').textContent = q ? `${total} of ${dailyModalRows.length} matching` : `${total} student${total === 1 ? '' : 's'}`;
+  $('daily-pager').innerHTML =
+    total > DAILY_MODAL_PAGE
+      ? `<button class="ghost sm" id="daily-prev" ${dailyModalPage <= 1 ? 'disabled' : ''}>‹ Prev</button>` +
+        `<span class="muted">${from}–${Math.min(start + DAILY_MODAL_PAGE, total)} of ${total} · page ${dailyModalPage}/${pages}</span>` +
+        `<button class="ghost sm" id="daily-next" ${dailyModalPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+
+  if (total > DAILY_MODAL_PAGE) {
+    $('daily-prev')?.addEventListener('click', () => {
+      if (dailyModalPage > 1) {
+        dailyModalPage--;
+        renderDailyModalPage();
+      }
+    });
+    $('daily-next')?.addEventListener('click', () => {
+      if (dailyModalPage < pages) {
+        dailyModalPage++;
+        renderDailyModalPage();
+      }
+    });
+  }
+}
+
+$('daily-table')?.addEventListener('click', (e) => {
+  const trigger = e.target.closest('.daily-col-hdr, .daily-summary-btn');
+  if (trigger && trigger.dataset.dayIdx != null) {
+    e.preventDefault();
+    openDailyModal(trigger.dataset.dayIdx);
+    return;
+  }
+  const u = e.target.closest('.user-link[data-user]');
+  if (u && u.dataset.user) {
+    e.preventDefault();
+    openPerf(u.dataset.user);
+  }
+});
+
+$('daily-modal-close')?.addEventListener('click', () => $('daily-modal').classList.add('hidden'));
+$('daily-modal')?.addEventListener('click', (e) => { if (e.target.id === 'daily-modal') $('daily-modal').classList.add('hidden'); });
+$('daily-modal-search')?.addEventListener('input', () => { dailyModalPage = 1; renderDailyModalPage(); });
+$('daily-modal-table')?.addEventListener('click', (e) => {
+  const target = e.target.closest('.view-perf-btn, .view-perf-link, .user-link[data-user]');
+  if (target && target.dataset.user) {
+    e.preventDefault();
+    openPerf(target.dataset.user);
+  }
+});
 
 boot();

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { login, parseContestSlug, fetchAllLeaderboard, buildMatrix } from './lib/hackerrank.js';
+import { login, createJar, parseContestSlug, fetchAllLeaderboard, buildMatrix } from './lib/hackerrank.js';
 import { buildMockDashboard } from './lib/mock.js';
 import * as db from './lib/db.js';
 
@@ -344,6 +344,14 @@ app.post('/api/students/upload', requireAdmin, async (req, res) => {
     res.json({ ok: true, ...r, assigned, received: students.length, unmatched, duplicates, merged, warnings });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+app.put('/api/students/:id', requireAdmin, async (req, res) => {
+  try {
+    const updated = await db.updateStudent(req.params.id, req.body || {});
+    res.json({ ok: true, student: updated });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
 app.delete('/api/students', requireAdmin, async (req, res) => {
   try {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -352,14 +360,83 @@ app.delete('/api/students', requireAdmin, async (req, res) => {
 });
 
 // ---------------- HackerRank connect + scrape ----------------
+let envHrSessionCache = null;
+let envHrSessionTime = 0;
+const SESSION_TTL = 30 * 60 * 1000; // 30 mins
+
+// Helper to obtain a HackerRank session using server environment variables or cached session.
+async function getEnvHrSession(forceRefresh = false) {
+  if (MOCK) return { mock: true };
+  if (!forceRefresh && envHrSessionCache && Date.now() - envHrSessionTime < SESSION_TTL) {
+    return envHrSessionCache;
+  }
+  const email = HR_EMAIL || process.env.HR_EMAIL;
+  const pass = HR_PASS || process.env.HR_PASS;
+  const cookieStr = process.env.HR_COOKIE || '';
+
+  if (cookieStr) {
+    const jar = createJar();
+    cookieStr.split(';').forEach((part) => {
+      const eq = part.indexOf('=');
+      if (eq !== -1) {
+        const k = part.slice(0, eq).trim();
+        const v = part.slice(eq + 1).trim();
+        if (k) jar.set(k, v);
+      }
+    });
+    const csrfToken = jar.get('_csrf_token') || jar.get('csrf_token') || '';
+    envHrSessionCache = { jar, csrfToken };
+    envHrSessionTime = Date.now();
+    return envHrSessionCache;
+  }
+
+  if (!email || !pass) {
+    throw new Error('HR_EMAIL / HR_PASS environment variables are not configured in .env on the server.');
+  }
+  try {
+    const { jar, csrfToken } = await login(email, pass);
+    envHrSessionCache = { jar, csrfToken };
+    envHrSessionTime = Date.now();
+    return envHrSessionCache;
+  } catch (err) {
+    envHrSessionCache = null;
+    throw new Error(`HackerRank connection failed: ${err.message}`);
+  }
+}
+
+app.get('/api/hr/status', requireAdmin, async (_req, res) => {
+  try {
+    const hasEnv = !!(HR_EMAIL && HR_PASS) || !!process.env.HR_COOKIE;
+    const isConnected = !!envHrSessionCache || hrSessions.size > 0 || MOCK;
+    res.json({
+      ok: true,
+      hasEnvCreds: hasEnv,
+      connected: isConnected,
+      email: HR_EMAIL ? HR_EMAIL.replace(/(.{2})(.*)(@.*)/, '$1***$3') : '',
+      mock: MOCK,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/hr/connect', requireAdmin, async (req, res) => {
   try {
     if (MOCK) { const t = crypto.randomUUID(); hrSessions.set(t, { mock: true }); return res.json({ ok: true, hrToken: t, mock: true }); }
-    const { email, password } = req.body || {};
-    const { jar, csrfToken } = await login(email, password);
-    const t = crypto.randomUUID(); hrSessions.set(t, { jar, csrfToken });
+    let { email, password } = req.body || {};
+    if ((!email || !password) && (HR_EMAIL && HR_PASS)) {
+      email = HR_EMAIL;
+      password = HR_PASS;
+    }
+    const session = await login(email, password);
+    const t = crypto.randomUUID();
+    hrSessions.set(t, session);
+    envHrSessionCache = session;
+    envHrSessionTime = Date.now();
     res.json({ ok: true, hrToken: t });
-  } catch (e) { res.status(401).json({ error: e.message }); }
+  } catch (e) {
+    res.status(401).json({ error: e.message });
+  }
 });
 
 const SCRAPE_CAP = 3000; // max users compared per scrape
@@ -398,48 +475,73 @@ function assembleDashboard({ slug, contest, leaderboard, questions, userMap, ref
   };
 }
 
+async function scrapeAndSave(session, contest, onProgress) {
+  const slug = contest.slug;
+  if (!slug) throw new Error('Course has no link.');
+  if (MOCK || session.mock) { const dash = buildMockDashboard(slug, 60); await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug); return { slug, users: dash.summary.totalUsers }; }
+  const { jar, csrfToken } = session;
+  let leaderboard = [];
+  try { leaderboard = await fetchAllLeaderboard({ jar, csrfToken, slug }); } catch { /* ranks are optional; full leaderboard */ }
+  const rankMap = new Map(leaderboard.map((l) => [String(l.username).toLowerCase(), l.rank]));
+  const { targets } = await resolveScrapeTargets(contest, leaderboard);
+  if (!targets.length) throw new Error('no students mapped and no leaderboard entries');
+  const reference = (leaderboard[0] && leaderboard[0].username) || targets[0];
+  const { contest: c, questions, userMap } = await buildMatrix({ jar, csrfToken, slug, hackers: targets, reference, concurrency: 8, onProgress });
+  const entries = targets.map((u) => ({ username: u, rank: rankMap.get(u.toLowerCase()) ?? null }));
+  const dash = assembleDashboard({ slug, contest: c, leaderboard: entries, questions, userMap, reference });
+  await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug);
+  return { slug, users: dash.summary.totalUsers };
+}
+
+// Single contest scrape runner with live SSE streaming.
+async function streamSingleContestScrape({ session, contest, send, isAborted }) {
+  const slug = contest.slug;
+  if (!slug) throw new Error('Course has no link.');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  if (MOCK || session.mock) {
+    const dash = buildMockDashboard(slug, 60); const total = dash.summary.totalUsers;
+    for (let i = 1; i <= total && !isAborted(); i++) { send('progress', { phase: 'comparing', completed: i, total }); await sleep(15); }
+    if (!isAborted()) { const saved = await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug); send('done', { ...saved, summary: dash.summary, contest: dash.contest }); }
+    return;
+  }
+  const { jar, csrfToken } = session;
+  send('progress', { phase: 'leaderboard', completed: 0, total: 0 });
+  let leaderboard = [];
+  try { leaderboard = await fetchAllLeaderboard({ jar, csrfToken, slug, onPage: (c) => send('progress', { phase: 'leaderboard', completed: c, total: 0 }) }); }
+  catch (e) { send('progress', { phase: 'leaderboard', completed: 0, total: 0, note: 'leaderboard unavailable: ' + e.message }); }
+  const rankMap = new Map(leaderboard.map((l) => [String(l.username).toLowerCase(), l.rank]));
+
+  const { targets, source, capped, rosterCount } = await resolveScrapeTargets(contest, leaderboard);
+  if (!targets.length) { send('failed', { error: 'No students mapped to this course and no leaderboard entries. Upload a roster and map it to this course.' }); return; }
+  send('progress', { phase: 'comparing', completed: 0, total: targets.length, source, capped, rosterCount });
+
+  const reference = (leaderboard[0] && leaderboard[0].username) || targets[0];
+  const { contest: cInfo, questions, userMap } = await buildMatrix({ jar, csrfToken, slug, hackers: targets, reference, concurrency: 8, onProgress: (c, t) => { if (!isAborted()) send('progress', { phase: 'comparing', completed: c, total: t }); } });
+  if (isAborted()) return;
+  const entries = targets.map((u) => ({ username: u, rank: rankMap.get(u.toLowerCase()) ?? null }));
+  const dash = assembleDashboard({ slug, contest: cInfo, leaderboard: entries, questions, userMap, reference });
+  const saved = await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug);
+  send('done', { ...saved, summary: dash.summary, contest: dash.contest, source, capped });
+}
+
 // Scrape a college's contest with live progress (SSE).
 app.get('/api/scrape-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders?.();
   const send = (ev, d) => res.write(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`);
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let aborted = false; req.on('close', () => { aborted = true; });
   try {
     const { adminToken, hrToken, contestId } = req.query;
     if (!adminToken || (!verifyAdminToken(adminToken) && !adminTokens.has(adminToken))) { send('failed', { error: 'Admin auth required.' }); return res.end(); }
-    const session = hrSessions.get(hrToken);
-    if (!session) { send('failed', { error: 'Connect your HackerRank account first.' }); return res.end(); }
+    let session = hrSessions.get(hrToken);
+    if (!session) {
+      try { session = await getEnvHrSession(); }
+      catch (e) { send('failed', { error: e.message || 'Connect your HackerRank account first or configure HR_EMAIL/HR_PASS in .env.' }); return res.end(); }
+    }
     const ct = await db.getContest(contestId);
     if (!ct || !ct.slug) { send('failed', { error: 'Course has no link.' }); return res.end(); }
-    const slug = ct.slug;
-
-    if (MOCK || session.mock) {
-      const dash = buildMockDashboard(slug, 60); const total = dash.summary.totalUsers;
-      for (let i = 1; i <= total && !aborted; i++) { send('progress', { phase: 'comparing', completed: i, total }); await sleep(15); }
-      if (!aborted) { const saved = await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug); send('done', { ...saved, summary: dash.summary, contest: dash.contest }); }
-      return res.end();
-    }
-    const { jar, csrfToken } = session;
-    // Leaderboard is fetched only for ranks + a reference hacker (best-effort).
-    send('progress', { phase: 'leaderboard', completed: 0, total: 0 });
-    let leaderboard = [];
-    try { leaderboard = await fetchAllLeaderboard({ jar, csrfToken, slug, onPage: (c) => send('progress', { phase: 'leaderboard', completed: c, total: 0 }) }); } // no cap — full leaderboard for ranks
-    catch (e) { send('progress', { phase: 'leaderboard', completed: 0, total: 0, note: 'leaderboard unavailable: ' + e.message }); }
-    const rankMap = new Map(leaderboard.map((l) => [String(l.username).toLowerCase(), l.rank]));
-
-    const { targets, source, capped, rosterCount } = await resolveScrapeTargets(ct, leaderboard);
-    if (!targets.length) { send('failed', { error: 'No students mapped to this course and no leaderboard entries. Upload a roster and map it to this course.' }); return res.end(); }
-    send('progress', { phase: 'comparing', completed: 0, total: targets.length, source, capped, rosterCount });
-
-    const reference = (leaderboard[0] && leaderboard[0].username) || targets[0];
-    const { contest, questions, userMap } = await buildMatrix({ jar, csrfToken, slug, hackers: targets, reference, concurrency: 8, onProgress: (c, t) => { if (!aborted) send('progress', { phase: 'comparing', completed: c, total: t }); } });
-    if (aborted) return res.end();
-    // Build the user rows from the target list (roster), pulling rank from the leaderboard when present.
-    const entries = targets.map((u) => ({ username: u, rank: rankMap.get(u.toLowerCase()) ?? null }));
-    const dash = assembleDashboard({ slug, contest, leaderboard: entries, questions, userMap, reference });
-    const saved = await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug);
-    send('done', { ...saved, summary: dash.summary, contest: dash.contest, source, capped });
+    await streamSingleContestScrape({ session, contest: ct, send, isAborted: () => aborted });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
 });
@@ -454,8 +556,11 @@ app.get('/api/sync-all-stream', async (req, res) => {
   try {
     const { adminToken, hrToken } = req.query;
     if (!adminToken || (!verifyAdminToken(adminToken) && !adminTokens.has(adminToken))) { send('failed', { error: 'Admin auth required.' }); return res.end(); }
-    const session = hrSessions.get(hrToken);
-    if (!session) { send('failed', { error: 'Connect your HackerRank account first.' }); return res.end(); }
+    let session = hrSessions.get(hrToken);
+    if (!session) {
+      try { session = await getEnvHrSession(); }
+      catch (e) { send('failed', { error: e.message || 'Connect your HackerRank account first or configure HR_EMAIL/HR_PASS in .env.' }); return res.end(); }
+    }
     const contests = (await db.listContests()).filter((c) => c.slug);
     if (!contests.length) { send('failed', { error: 'No contests have a HackerRank link yet.' }); return res.end(); }
     send('start', { total: contests.length });
@@ -723,6 +828,22 @@ app.get('/api/shared/:token/attendance', async (req, res) => {
   } catch (e) { res.status(200).json({ error: e.message, sheets: [] }); }
 });
 
+// Read-only contest sync stream using server environment credentials (no prompt required)
+app.get('/api/shared/:token/sync-stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders?.();
+  const send = (ev, d) => res.write(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`);
+  let aborted = false; req.on('close', () => { aborted = true; });
+  try {
+    const contest = await db.getContestByShareToken(req.params.token);
+    if (!contest) { send('failed', { error: 'This link is invalid or was revoked.' }); return res.end(); }
+    if (!contest.slug) { send('failed', { error: 'Course has no link.' }); return res.end(); }
+    const session = await getEnvHrSession();
+    await streamSingleContestScrape({ session, contest, send, isAborted: () => aborted });
+    res.end();
+  } catch (e) { send('failed', { error: e.message }); res.end(); }
+});
+
 // ---------------- College-wide share link ----------------
 // Token stored both ways in app_settings for O(1) lookup, no schema change.
 async function collegeIdForToken(token) { return token ? await db.getSetting('college_token:' + token) : null; }
@@ -771,6 +892,50 @@ app.get('/api/college/:token/attendance', async (req, res) => {
     res.json(await collegeAttendance(college ? college.name : ''));
   } catch (e) { res.status(200).json({ error: e.message, sheets: [] }); }
 });
+
+// Read-only college sync stream using server environment credentials (no prompt required)
+app.get('/api/college/:token/sync-stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders?.();
+  const send = (ev, d) => res.write(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`);
+  let aborted = false; req.on('close', () => { aborted = true; });
+  try {
+    const id = await collegeIdForToken(req.params.token);
+    if (!id) { send('failed', { error: 'This link is invalid or was revoked.' }); return res.end(); }
+    const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
+    if (!college) { send('failed', { error: 'College not found.' }); return res.end(); }
+    const session = await getEnvHrSession();
+
+    const { contestId } = req.query;
+    if (contestId && contestId !== 'all') {
+      const contest = await db.getContest(contestId);
+      if (!contest || contest.college !== college.name) { send('failed', { error: 'Course not found in this college.' }); return res.end(); }
+      if (!contest.slug) { send('failed', { error: 'This course has no link.' }); return res.end(); }
+      await streamSingleContestScrape({ session, contest, send, isAborted: () => aborted });
+      return res.end();
+    }
+
+    // Sync all contests in this college
+    const contests = (await db.listContests(college.name)).filter((c) => c.slug);
+    if (!contests.length) { send('failed', { error: 'No courses with links found for this college.' }); return res.end(); }
+    send('start', { total: contests.length, college: college.name });
+    let ok = 0; const failures = [];
+    for (let i = 0; i < contests.length && !aborted; i++) {
+      const c = contests[i];
+      const at = { index: i + 1, total: contests.length, name: c.name, college: college.name };
+      send('contest', at);
+      try {
+        const r = await scrapeAndSave(session, c, (completed, total) => { if (!aborted) send('progress', { ...at, completed, totalUsers: total }); });
+        ok++; send('contest-done', { ...at, users: r.users });
+      } catch (e) {
+        failures.push(`${c.name}: ${e.message}`);
+        send('contest-failed', { ...at, error: e.message });
+      }
+    }
+    if (!aborted) send('done', { ok, total: contests.length, failures, college: college.name });
+    res.end();
+  } catch (e) { send('failed', { error: e.message }); res.end(); }
+});
 app.get(['/view/:token', '/view/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
 app.get(['/college/:token', '/college/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
@@ -780,29 +945,11 @@ app.get(['/admin', '/admin/'], (_req, res) => res.sendFile(path.join(__dirname, 
 
 // ---------------- Automatic sync (scheduled) ----------------
 const autoState = { lastRun: null, lastResult: null, running: false };
-async function scrapeAndSave(session, contest, onProgress) {
-  const slug = contest.slug;
-  if (MOCK || session.mock) { const dash = buildMockDashboard(slug, 60); await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug); return { slug, users: dash.summary.totalUsers }; }
-  const { jar, csrfToken } = session;
-  let leaderboard = [];
-  try { leaderboard = await fetchAllLeaderboard({ jar, csrfToken, slug }); } catch { /* ranks are optional; full leaderboard */ }
-  const rankMap = new Map(leaderboard.map((l) => [String(l.username).toLowerCase(), l.rank]));
-  const { targets } = await resolveScrapeTargets(contest, leaderboard);
-  if (!targets.length) throw new Error('no students mapped and no leaderboard entries');
-  const reference = (leaderboard[0] && leaderboard[0].username) || targets[0];
-  const { contest: c, questions, userMap } = await buildMatrix({ jar, csrfToken, slug, hackers: targets, reference, concurrency: 8, onProgress });
-  const entries = targets.map((u) => ({ username: u, rank: rankMap.get(u.toLowerCase()) ?? null }));
-  const dash = assembleDashboard({ slug, contest: c, leaderboard: entries, questions, userMap, reference });
-  await db.saveScrape(slug, dash); invalidateScrapeCache(slug); pruneScrapesFor(slug);
-  return { slug, users: dash.summary.totalUsers };
-}
 async function autoSyncAll() {
   if (autoState.running) return;
   autoState.running = true;
   try {
-    let session;
-    if (MOCK) session = { mock: true };
-    else { if (!HR_EMAIL || !HR_PASS) throw new Error('HR_EMAIL / HR_PASS env vars not set'); const { jar, csrfToken } = await login(HR_EMAIL, HR_PASS); session = { jar, csrfToken }; }
+    const session = await getEnvHrSession();
     const contests = (await db.listContests()).filter((c) => c.slug);
     let ok = 0; const errs = [];
     for (const c of contests) { try { await scrapeAndSave(session, c); ok++; } catch (e) { errs.push(`${c.slug}: ${e.message}`); } }

@@ -44,9 +44,27 @@ async function enterApp() {
     $('login-screen').classList.add('hidden');
     $('app').classList.remove('hidden');
     await loadColleges();
-    await Promise.allSettled([loadAutoSyncStatus(), loadSharedTabs()]);
+    await Promise.allSettled([loadAutoSyncStatus(), loadSharedTabs(), loadHrStatus()]);
   } catch (e) {
     logout();
+  }
+}
+async function loadHrStatus() {
+  try {
+    const s = await api('/api/hr/status');
+    const pill = $('hr-pill');
+    if (s.mock) {
+      pill.textContent = 'HR: mock';
+      pill.className = 'pill';
+    } else if (s.connected || s.hasEnvCreds) {
+      pill.textContent = s.email ? `HR: connected (${s.email})` : 'HR: connected (.env)';
+      pill.className = 'pill';
+    } else {
+      pill.textContent = 'HR: not connected';
+      pill.className = 'pill off';
+    }
+  } catch {
+    /* ignore */
   }
 }
 async function loadAutoSyncStatus() {
@@ -64,8 +82,8 @@ async function loadAutoSyncStatus() {
     el.style.color = (!s.hasCreds || (s.lastResult && /fail/i.test(s.lastResult))) ? 'var(--danger)' : '';
   } catch { /* ignore */ }
 }
-// Refresh the auto-sync note periodically so a scheduled/running sync shows up live.
-setInterval(() => { if (adminToken && !document.getElementById('login-screen')?.offsetParent) loadAutoSyncStatus(); }, 60 * 1000);
+// Refresh status periodically
+setInterval(() => { if (adminToken && !document.getElementById('login-screen')?.offsetParent) { loadAutoSyncStatus(); loadHrStatus(); } }, 60 * 1000);
 
 // ---------- Tabs ----------
 document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click', () => {
@@ -78,6 +96,9 @@ document.querySelectorAll('#tabs .tab').forEach((b) => b.addEventListener('click
 let attSheets = [];      // [{ name, columns, rows }]
 let attSheetIdx = 0;
 let attCollegeId = '';
+let attPage = 1;
+const ATT_PAGE = 50;
+
 function renderAttSheetTabs() {
   const el = $('att-sheet-tabs');
   if (attSheets.length <= 1) { el.innerHTML = ''; return; }
@@ -98,20 +119,40 @@ function renderAttendance() {
   const sheet = attSheets[attSheetIdx];
   const q = $('att-search').value.trim().toLowerCase();
   const cols = sheet ? sheet.columns : [];
-  const rows = sheet ? sheet.rows.filter((r) => !q || r.some((c) => attText(c).toLowerCase().includes(q))) : [];
-  $('att-count').textContent = sheet ? `${rows.length} row${rows.length === 1 ? '' : 's'}${q ? ' (filtered)' : ''}` : '';
-  if (!cols.length) { $('att-table').innerHTML = sheet ? '<tbody><tr><td class="muted">This tab is empty.</td></tr></tbody>' : ''; return; }
+  const allRows = sheet ? sheet.rows.filter((r) => !q || r.some((c) => attText(c).toLowerCase().includes(q))) : [];
+  $('att-count').textContent = sheet ? `${allRows.length} row${allRows.length === 1 ? '' : 's'}${q ? ' (filtered)' : ''}` : '';
+  if (!cols.length) {
+    $('att-table').innerHTML = sheet ? '<tbody><tr><td class="muted">This tab is empty.</td></tr></tbody>' : '';
+    if ($('att-pager')) $('att-pager').innerHTML = '';
+    return;
+  }
+  const pages = Math.max(1, Math.ceil(allRows.length / ATT_PAGE));
+  if (attPage > pages) attPage = pages;
+  const start = (attPage - 1) * ATT_PAGE;
+  const rows = allRows.slice(start, start + ATT_PAGE);
+
   $('att-table').innerHTML =
     `<thead><tr><th class="num">#</th>${cols.map((c) => `<th>${attCell(c)}</th>`).join('')}</tr></thead><tbody>` +
-    (rows.length ? rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${cols.map((_, j) => `<td>${attCell(r[j])}</td>`).join('')}</tr>`).join('')
+    (rows.length ? rows.map((r, i) => `<tr><td class="num">${start + i + 1}</td>${cols.map((_, j) => `<td>${attCell(r[j])}</td>`).join('')}</tr>`).join('')
       : `<tr><td colspan="${cols.length + 1}" class="muted">No rows.</td></tr>`) + `</tbody>`;
+
+  const from = allRows.length ? start + 1 : 0;
+  if ($('att-pager')) {
+    $('att-pager').innerHTML = allRows.length > ATT_PAGE
+      ? `<button class="ghost sm" id="att-prev" ${attPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + ATT_PAGE, allRows.length)} of ${allRows.length} · page ${attPage}/${pages}</span><button class="ghost sm" id="att-next" ${attPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+    if (allRows.length > ATT_PAGE) {
+      $('att-prev')?.addEventListener('click', () => { if (attPage > 1) { attPage--; renderAttendance(); } });
+      $('att-next')?.addEventListener('click', () => { if (attPage < pages) { attPage++; renderAttendance(); } });
+    }
+  }
 }
 $('att-sheet-tabs').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-idx]'); if (!b) return;
-  attSheetIdx = Number(b.dataset.idx); renderAttendance();
+  attSheetIdx = Number(b.dataset.idx); attPage = 1; renderAttendance();
 });
 function applyAttResult(d) {
-  attSheets = d.sheets || []; attSheetIdx = 0;
+  attSheets = d.sheets || []; attSheetIdx = 0; attPage = 1;
   renderAttendance();
   const totalRows = attSheets.reduce((a, s) => a + s.rows.length, 0);
   return { totalRows, tabs: attSheets.length };
@@ -120,7 +161,7 @@ async function loadAttendance() {
   fillCollegeSelect($('att-college'));
   if (!attCollegeId && colleges[0]) attCollegeId = String(colleges[0].id);
   $('att-college').value = attCollegeId;
-  attSheets = []; attSheetIdx = 0; renderAttendance();
+  attSheets = []; attSheetIdx = 0; attPage = 1; renderAttendance();
   if (!attCollegeId) { setStatus($('att-status'), 'Add a college first (Colleges tab).', 'info'); $('att-url').value = ''; return; }
   setStatus($('att-status'), 'Loading…', 'info');
   try {
@@ -132,7 +173,7 @@ async function loadAttendance() {
     else setStatus($('att-status'), `Loaded ${tabs} tab(s), ${totalRows} row(s) total.`, 'ok');
   } catch (e) { setStatus($('att-status'), e.message, 'err'); }
 }
-$('att-college').addEventListener('change', (e) => { attCollegeId = e.target.value; loadAttendance(); });
+$('att-college').addEventListener('change', (e) => { attCollegeId = e.target.value; attPage = 1; loadAttendance(); });
 $('att-load').addEventListener('click', async () => {
   const url = $('att-url').value.trim();
   if (!attCollegeId) return setStatus($('att-status'), 'Pick a college first.', 'err');
@@ -150,13 +191,19 @@ $('att-remove').addEventListener('click', async () => {
   if (!confirm('Remove the attendance sheet link for this college?')) return;
   try {
     await api('/api/attendance?collegeId=' + attCollegeId, { method: 'DELETE' });
-    $('att-url').value = ''; attSheets = []; attSheetIdx = 0; renderAttendance();
+    $('att-url').value = ''; attSheets = []; attSheetIdx = 0; attPage = 1; renderAttendance();
     setStatus($('att-status'), 'Attendance link removed for this college.', 'ok');
   } catch (e) { setStatus($('att-status'), e.message, 'err'); }
 });
-$('att-search').addEventListener('input', renderAttendance);
+$('att-search').addEventListener('input', () => { attPage = 1; renderAttendance(); });
 
 // ---------- Colleges ----------
+let collegesPage = 1;
+const COLLEGES_PAGE = 10;
+let ccPage = 1;
+const CC_PAGE = 10;
+let ccContests = [];
+
 async function loadColleges() {
   colleges = (await api('/api/colleges')).colleges || [];
   renderCollegesTable();
@@ -170,17 +217,72 @@ function fillCollegeSelect(sel) {
   sel.innerHTML = colleges.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('') || `<option value="">No colleges yet</option>`;
   if (colleges.some((c) => String(c.id) === prev)) sel.value = prev;
 }
-function renderCollegesTable() {
-  $('c-count').textContent = `· ${colleges.length}`;
-  $('colleges-table').innerHTML =
-    `<thead><tr><th>College</th><th class="num">Students</th><th>Code</th><th>Set code</th><th></th></tr></thead><tbody>` +
-    (colleges.length ? colleges.map((c) =>
-      `<tr><td>${esc(c.name)}</td><td class="num">${c.students}</td>` +
-      `<td>${c.hasCode ? '<span class="chip code">set</span>' : '<span class="chip nocode">none</span>'}</td>` +
-      `<td><input class="code-input" data-id="${c.id}" placeholder="new code" style="min-width:110px"/> <button class="ghost sm" data-savecode="${c.id}">Save</button></td>` +
-      `<td><button class="ghost sm danger" data-delc="${c.id}">Delete</button></td></tr>`).join('')
-      : `<tr><td colspan="5" class="muted">No colleges yet.</td></tr>`) + `</tbody>`;
+
+function getFilteredColleges() {
+  const q = ($('c-search')?.value || '').trim().toLowerCase();
+  if (!q) return colleges;
+  return colleges.filter((c) => (c.name || '').toLowerCase().includes(q));
 }
+
+function renderCollegesTable() {
+  const filtered = getFilteredColleges();
+  $('c-count').textContent = `· ${colleges.length}${filtered.length !== colleges.length ? ` (${filtered.length} matching)` : ''}`;
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / COLLEGES_PAGE));
+  if (collegesPage > pages) collegesPage = pages;
+  const start = (collegesPage - 1) * COLLEGES_PAGE;
+  const rows = filtered.slice(start, start + COLLEGES_PAGE);
+
+  $('colleges-table').innerHTML =
+    `<thead><tr>` +
+    `<th>#</th>` +
+    `<th>College</th>` +
+    `<th class="num">Students</th>` +
+    `<th class="num">Courses</th>` +
+    `<th>Student Code</th>` +
+    `<th>Set Code</th>` +
+    `<th>🔗 Share College</th>` +
+    `<th style="text-align:center">Actions</th>` +
+    `</tr></thead><tbody>` +
+    (rows.length ? rows.map((c, i) => {
+      const shareUrl = c.shareToken ? `${location.origin}/college/${c.shareToken}` : '';
+      const shareHtml = shareUrl
+        ? `<div style="display:flex;align-items:center;gap:4px">` +
+          `<span style="font-family:monospace;font-size:.74rem;background:var(--surface2);padding:2px 6px;border-radius:4px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(shareUrl)}">/college/${esc(c.shareToken)}</span>` +
+          `<button class="ghost sm" data-copy-college-share="${c.id}" data-url="${esc(shareUrl)}" title="Copy Share Link" style="padding:2px 6px">📋</button>` +
+          `<a href="${esc(shareUrl)}" target="_blank" class="ghost sm" style="text-decoration:none;padding:2px 6px;display:inline-block" title="Open Share Link">↗</a>` +
+          `</div>`
+        : `<button class="ghost sm" data-gen-college-share="${c.id}" style="font-size:.76rem;padding:2px 6px">🔗 Create Link</button>`;
+
+      return `<tr>` +
+        `<td class="num">${start + i + 1}</td>` +
+        `<td><b>${esc(c.name)}</b></td>` +
+        `<td class="num">${c.students}</td>` +
+        `<td class="num">${c.contestsCount || 0}</td>` +
+        `<td>${c.hasCode ? '<span class="chip code">set</span>' : '<span class="chip nocode">none</span>'}</td>` +
+        `<td><div style="display:flex;gap:4px"><input class="code-input" data-id="${c.id}" placeholder="new code" style="min-width:90px;padding:3px 6px;font-size:.8rem"/> <button class="ghost sm" data-savecode="${c.id}">Save</button></div></td>` +
+        `<td>${shareHtml}</td>` +
+        `<td style="text-align:center;white-space:nowrap">` +
+        `<button class="ghost sm" data-export-college="${c.id}" data-college-name="${esc(c.name)}" title="Export College Excel Data" style="padding:2px 6px;margin-right:4px">📥</button>` +
+        `<button class="ghost sm danger" data-delc="${c.id}" title="Delete College" style="padding:2px 6px">🗑</button>` +
+        `</td>` +
+        `</tr>`;
+    }).join('')
+      : `<tr><td colspan="8" class="muted">No colleges found.</td></tr>`) + `</tbody>`;
+
+  const from = total ? start + 1 : 0;
+  if ($('c-pager')) {
+    $('c-pager').innerHTML = total > COLLEGES_PAGE
+      ? `<button class="ghost sm" id="c-prev" ${collegesPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + COLLEGES_PAGE, total)} of ${total} · page ${collegesPage}/${pages}</span><button class="ghost sm" id="c-next" ${collegesPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+    if (total > COLLEGES_PAGE) {
+      $('c-prev')?.addEventListener('click', () => { if (collegesPage > 1) { collegesPage--; renderCollegesTable(); } });
+      $('c-next')?.addEventListener('click', () => { if (collegesPage < pages) { collegesPage++; renderCollegesTable(); } });
+    }
+  }
+}
+$('c-search')?.addEventListener('input', () => { collegesPage = 1; renderCollegesTable(); });
+
 $('c-add').addEventListener('click', async () => {
   const name = $('c-name').value.trim();
   if (!name) return setStatus($('c-status'), 'Enter a college name.', 'err');
@@ -190,8 +292,14 @@ $('c-add').addEventListener('click', async () => {
     setStatus($('c-status'), `Added "${name}".`, 'ok'); await loadColleges();
   } catch (e) { setStatus($('c-status'), e.message, 'err'); }
 });
+
 $('colleges-table').addEventListener('click', async (e) => {
-  const sc = e.target.closest('[data-savecode]'); const dc = e.target.closest('[data-delc]');
+  const sc = e.target.closest('[data-savecode]');
+  const dc = e.target.closest('[data-delc]');
+  const copyBtn = e.target.closest('[data-copy-college-share]');
+  const genBtn = e.target.closest('[data-gen-college-share]');
+  const expBtn = e.target.closest('[data-export-college]');
+
   if (sc) {
     const id = sc.dataset.savecode;
     const code = $('colleges-table').querySelector(`.code-input[data-id="${id}"]`).value.trim();
@@ -199,22 +307,109 @@ $('colleges-table').addEventListener('click', async (e) => {
     await api('/api/colleges/' + id, { method: 'PUT', body: { accessCode: code } });
     setStatus($('c-status'), 'Access code saved.', 'ok'); await loadColleges();
   }
-  if (dc) { if (!confirm('Delete this college?')) return; await api('/api/colleges/' + dc.dataset.delc, { method: 'DELETE' }); await loadColleges(); }
+  if (dc) {
+    if (!confirm('Delete this college and all its courses and student mappings?')) return;
+    await api('/api/colleges/' + dc.dataset.delc, { method: 'DELETE' });
+    await loadColleges();
+  }
+  if (copyBtn) {
+    const url = copyBtn.dataset.url;
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus($('c-status'), `Copied college link: ${url}`, 'ok');
+    } catch {
+      window.prompt('Copy college link:', url);
+    }
+  }
+  if (genBtn) {
+    const id = genBtn.dataset.genCollegeShare;
+    setStatus($('c-status'), 'Generating share link…', 'info');
+    try {
+      const r = await api('/api/colleges/' + id + '/share', { method: 'POST' });
+      const url = `${location.origin}/college/${r.token}`;
+      await loadColleges();
+      try { await navigator.clipboard.writeText(url); setStatus($('c-status'), `Created & copied college link: ${url}`, 'ok'); }
+      catch { setStatus($('c-status'), `Created college link: ${url}`, 'ok'); }
+    } catch (err) {
+      setStatus($('c-status'), err.message, 'err');
+    }
+  }
+  if (expBtn) {
+    exportSingleCollege(expBtn.dataset.exportCollege, expBtn.dataset.collegeName);
+  }
 });
 
 // ---------- Contest links (Colleges tab) ----------
-$('cc-college').addEventListener('change', loadCollegeContests);
+$('cc-college').addEventListener('change', () => { ccPage = 1; loadCollegeContests(); });
+$('cc-search')?.addEventListener('input', () => { ccPage = 1; renderCcTable(); });
+
 async function loadCollegeContests() {
   const id = $('cc-college').value;
-  const t = $('cc-table');
-  if (!id) { t.innerHTML = ''; return; }
-  const contests = (await api('/api/contests?collegeId=' + id)).contests || [];
-  t.innerHTML =
-    `<thead><tr><th>#</th><th>Course</th><th>Slug</th><th>Link</th><th></th></tr></thead><tbody>` +
-    (contests.length ? contests.map((c, i) =>
-      `<tr><td class="num">${i + 1}</td><td>${esc(c.name)}</td><td>${c.slug ? esc(c.slug) : '<span class="muted">—</span>'}</td><td class="muted" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">${esc(c.contestUrl || '—')}</td><td><button class="ghost sm danger" data-delcc="${c.id}">Delete</button></td></tr>`).join('')
-      : `<tr><td colspan="5" class="muted">No courses yet.</td></tr>`) + `</tbody>`;
+  if (!id) { ccContests = []; renderCcTable(); return; }
+  ccContests = (await api('/api/contests?collegeId=' + id)).contests || [];
+  renderCcTable();
 }
+
+function getFilteredCcContests() {
+  const q = ($('cc-search')?.value || '').trim().toLowerCase();
+  if (!q) return ccContests;
+  return ccContests.filter((c) => (c.name || '').toLowerCase().includes(q) || (c.slug || '').toLowerCase().includes(q));
+}
+
+function renderCcTable() {
+  const t = $('cc-table');
+  const filtered = getFilteredCcContests();
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / CC_PAGE));
+  if (ccPage > pages) ccPage = pages;
+  const start = (ccPage - 1) * CC_PAGE;
+  const rows = filtered.slice(start, start + CC_PAGE);
+
+  t.innerHTML =
+    `<thead><tr>` +
+    `<th>#</th>` +
+    `<th>Course</th>` +
+    `<th>Slug</th>` +
+    `<th>HackerRank Link</th>` +
+    `<th>🔗 Share Course</th>` +
+    `<th style="text-align:center">Actions</th>` +
+    `</tr></thead><tbody>` +
+    (rows.length ? rows.map((c, i) => {
+      const shareUrl = c.shareToken ? `${location.origin}/view/${c.shareToken}` : '';
+      const shareHtml = shareUrl
+        ? `<div style="display:flex;align-items:center;gap:4px">` +
+          `<span style="font-family:monospace;font-size:.74rem;background:var(--surface2);padding:2px 6px;border-radius:4px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(shareUrl)}">/view/${esc(c.shareToken)}</span>` +
+          `<button class="ghost sm" data-copy-course-share="${c.id}" data-url="${esc(shareUrl)}" title="Copy Course Link" style="padding:2px 6px">📋</button>` +
+          `<a href="${esc(shareUrl)}" target="_blank" class="ghost sm" style="text-decoration:none;padding:2px 6px;display:inline-block" title="Open Course Share Link">↗</a>` +
+          `</div>`
+        : `<button class="ghost sm" data-gen-course-share="${c.id}" style="font-size:.76rem;padding:2px 6px">🔗 Create Link</button>`;
+
+      return `<tr>` +
+        `<td class="num">${start + i + 1}</td>` +
+        `<td><b>${esc(c.name)}</b></td>` +
+        `<td>${c.slug ? `<span class="chip" style="font-size:.74rem">${esc(c.slug)}</span>` : '<span class="muted">—</span>'}</td>` +
+        `<td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.contestUrl || '')}">${esc(c.contestUrl || '—')}</td>` +
+        `<td>${shareHtml}</td>` +
+        `<td style="text-align:center;white-space:nowrap">` +
+        `<button class="ghost sm" data-export-course="${c.id}" data-course-name="${esc(c.name)}" title="Export Course Results to Excel" style="padding:2px 6px;margin-right:4px">📥</button>` +
+        `<button class="ghost sm danger" data-delcc="${c.id}" title="Delete Course" style="padding:2px 6px">🗑</button>` +
+        `</td>` +
+        `</tr>`;
+    }).join('')
+      : `<tr><td colspan="6" class="muted">${ccContests.length ? 'No matching courses.' : 'No courses yet.'}</td></tr>`) + `</tbody>`;
+
+  const from = total ? start + 1 : 0;
+  if ($('cc-pager')) {
+    $('cc-pager').innerHTML = total > CC_PAGE
+      ? `<button class="ghost sm" id="cc-prev" ${ccPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + CC_PAGE, total)} of ${total} · page ${ccPage}/${pages}</span><button class="ghost sm" id="cc-next" ${ccPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+    if (total > CC_PAGE) {
+      $('cc-prev')?.addEventListener('click', () => { if (ccPage > 1) { ccPage--; renderCcTable(); } });
+      $('cc-next')?.addEventListener('click', () => { if (ccPage < pages) { ccPage++; renderCcTable(); } });
+    }
+  }
+}
+
 async function refreshContestSelectors(collegeId) {
   await loadCollegeContests();
   if (String(collegeId) === String(selectedCollegeId)) await loadDashContests();
@@ -248,11 +443,215 @@ $('cc-bulk-add').addEventListener('click', async () => {
 });
 $('cc-table').addEventListener('click', async (e) => {
   const del = e.target.closest('[data-delcc]');
-  if (!del) return;
-  if (!confirm('Delete this course?')) return;
-  await api('/api/contests/' + del.dataset.delcc, { method: 'DELETE' });
-  await refreshContestSelectors($('cc-college').value);
+  const copyBtn = e.target.closest('[data-copy-course-share]');
+  const genBtn = e.target.closest('[data-gen-course-share]');
+  const expBtn = e.target.closest('[data-export-course]');
+
+  if (del) {
+    if (!confirm('Delete this course?')) return;
+    await api('/api/contests/' + del.dataset.delcc, { method: 'DELETE' });
+    await refreshContestSelectors($('cc-college').value);
+  }
+  if (copyBtn) {
+    const url = copyBtn.dataset.url;
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus($('cc-status'), `Copied course link: ${url}`, 'ok');
+    } catch {
+      window.prompt('Copy course link:', url);
+    }
+  }
+  if (genBtn) {
+    const id = genBtn.dataset.genCourseShare;
+    setStatus($('cc-status'), 'Generating share link…', 'info');
+    try {
+      const r = await api('/api/contests/' + id + '/share', { method: 'POST' });
+      const url = `${location.origin}/view/${r.token}`;
+      await loadCollegeContests();
+      try { await navigator.clipboard.writeText(url); setStatus($('cc-status'), `Created & copied course link: ${url}`, 'ok'); }
+      catch { setStatus($('cc-status'), `Created course link: ${url}`, 'ok'); }
+    } catch (err) {
+      setStatus($('cc-status'), err.message, 'err');
+    }
+  }
+  if (expBtn) {
+    exportSingleCourse(expBtn.dataset.exportCourse, expBtn.dataset.courseName);
+  }
 });
+
+// ---------- Bulk Exports & Helpers ----------
+$('bulk-export-all-colleges-btn')?.addEventListener('click', bulkExportAllColleges);
+$('bulk-copy-links-btn')?.addEventListener('click', bulkCopyAllShareLinks);
+
+async function bulkExportAllColleges() {
+  const statusEl = $('bulk-action-status');
+  setStatus(statusEl, 'Preparing bulk export workbook for all colleges…', 'info');
+  try {
+    const wb = XLSX.utils.book_new();
+    const allCols = (await api('/api/colleges')).colleges || [];
+    if (!allCols.length) return setStatus(statusEl, 'No colleges found to export.', 'err');
+
+    const summaryRows = [
+      ['College Name', 'Total Students', 'Total Courses', 'Has Student Code', 'College Share URL']
+    ];
+    for (const col of allCols) {
+      const shareUrl = col.shareToken ? `${location.origin}/college/${col.shareToken}` : 'Not generated';
+      summaryRows.push([col.name, col.students, col.contestsCount || 0, col.hasCode ? 'Yes' : 'No', shareUrl]);
+    }
+    const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows);
+    XLSX.utils.book_append_sheet(wb, summaryWs, 'Colleges Summary');
+
+    for (const col of allCols) {
+      setStatus(statusEl, `Fetching roster for "${col.name}"…`, 'info');
+      const stRes = await api('/api/students?college=' + encodeURIComponent(col.name));
+      const students = stRes.students || [];
+      const rosterRows = [
+        ['Name', 'HackerRank Username', 'Register Number', 'Email', 'Department', 'Section', 'Year', 'Campus']
+      ];
+      for (const s of students) {
+        rosterRows.push([
+          s.name || '', s.hrUsername || '', s.registerNo || '', s.email || '',
+          s.department || '', s.section || '', s.year || '', s.campus || ''
+        ]);
+      }
+      const ws = XLSX.utils.aoa_to_sheet(rosterRows);
+      let sheetName = String(col.name).replace(/[:\\\/\?\*\[\]]/g, '').slice(0, 28).trim() || `College_${col.id}`;
+      if (wb.SheetNames.includes(sheetName)) sheetName = `${sheetName.slice(0, 25)}_${col.id}`;
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    }
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `All_Colleges_Bulk_Export_${timestamp}.xlsx`);
+    setStatus(statusEl, `Exported ${allCols.length} colleges successfully!`, 'ok');
+  } catch (e) {
+    setStatus(statusEl, `Bulk export failed: ${e.message}`, 'err');
+  }
+}
+
+async function bulkCopyAllShareLinks() {
+  const statusEl = $('bulk-action-status');
+  setStatus(statusEl, 'Generating and compiling all share links…', 'info');
+  try {
+    const allCols = (await api('/api/colleges')).colleges || [];
+    if (!allCols.length) return setStatus(statusEl, 'No colleges found.', 'err');
+
+    const lines = ['⚡ HackerRank Dashboard — All College & Course Share Links', ''];
+    for (const col of allCols) {
+      let token = col.shareToken;
+      if (!token) {
+        try {
+          const r = await api('/api/colleges/' + col.id + '/share', { method: 'POST' });
+          token = r.token;
+          col.shareToken = token;
+        } catch { /* ignore */ }
+      }
+      const colUrl = token ? `${location.origin}/college/${token}` : '(no share link)';
+      lines.push(`🏛️ ${col.name}`);
+      lines.push(`   🔗 College Dashboard: ${colUrl}`);
+
+      const contestsRes = await api('/api/contests?collegeId=' + col.id);
+      const contests = contestsRes.contests || [];
+      if (contests.length) {
+        lines.push('   Courses:');
+        for (const ct of contests) {
+          let ctToken = ct.shareToken;
+          if (!ctToken) {
+            try {
+              const r = await api('/api/contests/' + ct.id + '/share', { method: 'POST' });
+              ctToken = r.token;
+            } catch { /* ignore */ }
+          }
+          const ctUrl = ctToken ? `${location.origin}/view/${ctToken}` : '(no share link)';
+          lines.push(`     • ${ct.name}: ${ctUrl}`);
+        }
+      }
+      lines.push('');
+    }
+
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(statusEl, `Copied all share links for ${allCols.length} colleges to clipboard! 📋`, 'ok');
+    } catch {
+      window.prompt('Copy all share links:', text);
+      setStatus(statusEl, 'Share links ready (copied from prompt).', 'ok');
+    }
+    renderCollegesTable();
+  } catch (e) {
+    setStatus(statusEl, `Failed to copy links: ${e.message}`, 'err');
+  }
+}
+
+async function exportSingleCollege(collegeId, collegeName) {
+  const statusEl = $('c-status');
+  setStatus(statusEl, `Exporting "${collegeName}"…`, 'info');
+  try {
+    const [stRes, ctRes] = await Promise.all([
+      api('/api/students?college=' + encodeURIComponent(collegeName)),
+      api('/api/contests?collegeId=' + collegeId)
+    ]);
+    const wb = XLSX.utils.book_new();
+    const students = stRes.students || [];
+    const rosterRows = [
+      ['Name', 'HackerRank Username', 'Register Number', 'Email', 'Department', 'Section', 'Year', 'Campus']
+    ];
+    for (const s of students) {
+      rosterRows.push([
+        s.name || '', s.hrUsername || '', s.registerNo || '', s.email || '',
+        s.department || '', s.section || '', s.year || '', s.campus || ''
+      ]);
+    }
+    const wsRoster = XLSX.utils.aoa_to_sheet(rosterRows);
+    XLSX.utils.book_append_sheet(wb, wsRoster, 'Student Roster');
+
+    const contests = ctRes.contests || [];
+    const courseRows = [
+      ['Course Name', 'Slug', 'HackerRank URL', 'Share URL']
+    ];
+    for (const ct of contests) {
+      const ctUrl = ct.shareToken ? `${location.origin}/view/${ct.shareToken}` : '';
+      courseRows.push([ct.name, ct.slug || '', ct.contestUrl || '', ctUrl]);
+    }
+    const wsCourses = XLSX.utils.aoa_to_sheet(courseRows);
+    XLSX.utils.book_append_sheet(wb, wsCourses, 'Courses');
+
+    const cleanName = collegeName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    XLSX.writeFile(wb, `${cleanName}_data.xlsx`);
+    setStatus(statusEl, `Exported "${collegeName}" data to Excel.`, 'ok');
+  } catch (e) {
+    setStatus(statusEl, `Export failed: ${e.message}`, 'err');
+  }
+}
+
+async function exportSingleCourse(contestId, contestName) {
+  const statusEl = $('cc-status');
+  setStatus(statusEl, `Exporting "${contestName}"…`, 'info');
+  try {
+    const d = await api('/api/contest-dashboard/' + contestId);
+    const dash = d.dashboard;
+    const students = d.students || [];
+    const byUser = new Map((dash?.users || []).map((u) => [u.username.toLowerCase(), u]));
+    const rows = [
+      ['Student Name', 'HackerRank Username', 'Department', 'Section', 'Solved', 'Score', 'Completion %', 'Campus', 'Register No', 'Email']
+    ];
+    const totalQ = dash?.summary?.totalQuestions || 0;
+    for (const s of students) {
+      const u = s.hrUsername ? byUser.get(s.hrUsername.toLowerCase()) : null;
+      const solved = u ? u.solved : 0;
+      const score = u ? u.computedScore : 0;
+      const comp = totalQ ? Math.round((solved / totalQ) * 100) : 0;
+      rows.push([s.name || '', s.hrUsername || '', s.department || '', s.section || '', solved, score, comp, s.campus || '', s.registerNo || '', s.email || '']);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Course Results');
+    const cleanName = contestName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    XLSX.writeFile(wb, `${cleanName}_course_data.xlsx`);
+    setStatus(statusEl, `Exported "${contestName}" data to Excel.`, 'ok');
+  } catch (e) {
+    setStatus(statusEl, `Export failed: ${e.message}`, 'err');
+  }
+}
 
 // ---------- Upload roster ----------
 $('up-college').addEventListener('change', loadUploadContests);
@@ -873,11 +1272,13 @@ function renderStudents() {
   const rows = all.slice(start, start + STUDENTS_PAGE);
   $('students-table').innerHTML =
     `<thead><tr><th><input type="checkbox" id="sel-all"/></th><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th>` +
-    (hasScrape ? `<th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th>` : '') + `</tr></thead><tbody>` +
+    (hasScrape ? `<th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th>` : '') +
+    `<th style="width:48px;text-align:center">Edit</th></tr></thead><tbody>` +
     (rows.length ? rows.map((r, idx) =>
       `<tr><td><input type="checkbox" class="sel" value="${r.id}"/></td><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td>` +
-      (hasScrape ? `<td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td>` : '') + `</tr>`).join('')
-      : `<tr><td colspan="9" class="muted">No students. Upload a roster (Upload tab).</td></tr>`) + `</tbody>`;
+      (hasScrape ? `<td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td>` : '') +
+      `<td style="text-align:center"><button class="ghost sm edit-student-btn" data-edit-student="${r.id}" title="Edit student details" style="padding:2px 7px;font-size:.85rem;cursor:pointer">✏️</button></td></tr>`).join('')
+      : `<tr><td colspan="${hasScrape ? 10 : 7}" class="muted">No students. Upload a roster (Upload tab).</td></tr>`) + `</tbody>`;
   const selAll = $('sel-all'); if (selAll) selAll.addEventListener('change', () => document.querySelectorAll('#students-table .sel').forEach((c) => (c.checked = selAll.checked)));
   const from = all.length ? start + 1 : 0;
   $('students-pager').innerHTML = all.length > STUDENTS_PAGE
@@ -888,6 +1289,100 @@ function renderStudents() {
     $('st-next').addEventListener('click', () => { if (studentsPage < pages) { studentsPage++; renderStudents(); } });
   }
 }
+
+// Student Edit Modal handlers
+function openEditStudent(id) {
+  const s = roster.find((x) => String(x.id) === String(id));
+  if (!s) return;
+  $('edit-st-id').value = s.id;
+  $('edit-st-name').value = s.name || '';
+  $('edit-st-username').value = s.hrUsername || '';
+  $('edit-st-reg').value = s.registerNo || '';
+  $('edit-st-email').value = s.email || '';
+  $('edit-st-campus').value = s.campus || '';
+  $('edit-st-dept').value = s.department || '';
+  $('edit-st-sec').value = s.section || '';
+  $('edit-st-year').value = s.year || '';
+
+  const sel = $('edit-st-college');
+  sel.innerHTML = colleges.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  if (s.college) sel.value = s.college;
+  else if (selectedCollegeId) {
+    const curCol = colleges.find((c) => String(c.id) === String(selectedCollegeId));
+    if (curCol) sel.value = curCol.name;
+  }
+
+  setStatus($('edit-st-status'), '', 'info');
+  $('edit-student-modal').classList.remove('hidden');
+}
+
+$('edit-st-close')?.addEventListener('click', () => $('edit-student-modal').classList.add('hidden'));
+$('edit-st-cancel')?.addEventListener('click', () => $('edit-student-modal').classList.add('hidden'));
+$('edit-student-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'edit-student-modal') $('edit-student-modal').classList.add('hidden');
+});
+
+$('edit-st-save')?.addEventListener('click', async () => {
+  const id = $('edit-st-id').value;
+  const name = $('edit-st-name').value.trim();
+  const hrUsername = $('edit-st-username').value.trim();
+  const registerNo = $('edit-st-reg').value.trim();
+  const email = $('edit-st-email').value.trim();
+  const college = $('edit-st-college').value.trim();
+  const campus = $('edit-st-campus').value.trim();
+  const department = $('edit-st-dept').value.trim();
+  const section = $('edit-st-sec').value.trim();
+  const year = $('edit-st-year').value.trim();
+
+  if (!name && !hrUsername) {
+    return setStatus($('edit-st-status'), 'Please provide a student name or HackerRank username.', 'err');
+  }
+
+  setStatus($('edit-st-status'), 'Saving changes…', 'info');
+  try {
+    const res = await api('/api/students/' + id, {
+      method: 'PUT',
+      body: { name, hrUsername, registerNo, email, college, campus, department, section, year }
+    });
+    const updated = res.student || { id: Number(id), name, hrUsername, registerNo, email, college, campus, department, section, year };
+
+    const idx = roster.findIndex((x) => String(x.id) === String(id));
+    if (idx !== -1) {
+      roster[idx] = { ...roster[idx], ...updated };
+    }
+
+    if (dailyDataCache && Array.isArray(dailyDataCache.students)) {
+      const dIdx = dailyDataCache.students.findIndex((x) => String(x.id) === String(id) || (x.hrUsername && x.hrUsername.toLowerCase() === (updated.hrUsername || '').toLowerCase()));
+      if (dIdx !== -1) {
+        dailyDataCache.students[dIdx] = { ...dailyDataCache.students[dIdx], ...updated };
+      }
+    }
+
+    setStatus($('edit-st-status'), 'Saved successfully!', 'ok');
+    setTimeout(() => {
+      $('edit-student-modal').classList.add('hidden');
+      renderStudents();
+      if (typeof drawDailyTable === 'function') drawDailyTable();
+    }, 400);
+  } catch (e) {
+    setStatus($('edit-st-status'), e.message || 'Failed to save student.', 'err');
+  }
+});
+
+$('students-table').addEventListener('click', (e) => {
+  const editBtn = e.target.closest('[data-edit-student]');
+  if (editBtn) {
+    e.preventDefault();
+    openEditStudent(editBtn.dataset.editStudent);
+    return;
+  }
+  const u = e.target.closest('.user-link[data-user]');
+  if (u && u.dataset.user) {
+    e.preventDefault();
+    openPerf(u.dataset.user);
+  }
+});
+
 $('del-btn').addEventListener('click', async () => {
   const ids = Array.from(document.querySelectorAll('#students-table .sel:checked')).map((c) => Number(c.value));
   if (!ids.length) return setStatus($('dash-status'), 'Select students to delete.', 'err');
@@ -904,10 +1399,13 @@ $('export-btn').addEventListener('click', () => {
 
 // ---------- Daily tab ----------
 let dailyCollegeId = '', dailyContestId = '';
+let dailyPage = 1;
+const DAILY_PAGE = 30;
+
 document.querySelectorAll('#tabs .tab').forEach((b) => { if (b.dataset.tab === 'daily') b.addEventListener('click', initDailyTab); });
 function initDailyTab() { fillCollegeSelect($('daily-college')); if (!dailyCollegeId && colleges[0]) dailyCollegeId = String(colleges[0].id); $('daily-college').value = dailyCollegeId; loadDailyContests(); }
-$('daily-college').addEventListener('change', (e) => { dailyCollegeId = e.target.value; dailyContestId = ''; loadDailyContests(); });
-$('daily-contest').addEventListener('change', (e) => { dailyContestId = e.target.value; renderDaily(); });
+$('daily-college').addEventListener('change', (e) => { dailyCollegeId = e.target.value; dailyContestId = ''; dailyPage = 1; loadDailyContests(); });
+$('daily-contest').addEventListener('change', (e) => { dailyContestId = e.target.value; dailyPage = 1; renderDaily(); });
 async function loadDailyContests() {
   if (!dailyCollegeId) return;
   const contests = (await api('/api/contests?collegeId=' + dailyCollegeId)).contests || [];
@@ -915,15 +1413,18 @@ async function loadDailyContests() {
   sel.innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('') || `<option value="">No contests</option>`;
   if (!contests.some((c) => String(c.id) === dailyContestId)) dailyContestId = contests[0] ? String(contests[0].id) : '';
   sel.value = dailyContestId;
+  dailyPage = 1;
   renderDaily();
 }
 let dailyDataCache = null; // { days, students } for the loaded course
+function fmtDay(s) { const dt = new Date(s + 'T00:00:00'); return isNaN(dt) ? s : dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
+
 async function renderDaily() {
   const t = $('daily-table');
-  if (!dailyContestId) { t.innerHTML = ''; $('daily-note').textContent = ''; dailyDataCache = null; return; }
+  if (!dailyContestId) { t.innerHTML = ''; $('daily-note').textContent = ''; dailyDataCache = null; if ($('daily-table-pager')) $('daily-table-pager').innerHTML = ''; return; }
   const d = await api('/api/daily/' + dailyContestId);
   dailyDataCache = d;
-  if (!d.days.length) { t.innerHTML = `<tbody><tr><td class="muted">No snapshots yet — sync this course on at least one day (ideally daily) to build history.</td></tr></tbody>`; $('daily-note').textContent = ''; return; }
+  if (!d.days.length) { t.innerHTML = `<tbody><tr><td class="muted">No snapshots yet — sync this course on at least one day (ideally daily) to build history.</td></tr></tbody>`; $('daily-note').textContent = ''; if ($('daily-table-pager')) $('daily-table-pager').innerHTML = ''; return; }
   // Populate filter dropdowns from this course's students.
   const dailyLabels = { department: 'departments', section: 'sections', year: 'years', campus: 'campuses' };
   for (const [id, key] of [['daily-f-campus', 'campus'], ['daily-f-department', 'department'], ['daily-f-section', 'section'], ['daily-f-year', 'year']]) {
@@ -934,22 +1435,257 @@ async function renderDaily() {
   }
   drawDailyTable();
 }
-function drawDailyTable() {
-  const d = dailyDataCache; if (!d) return;
-  const t = $('daily-table');
-  const f = { campus: $('daily-f-campus').value, department: $('daily-f-department').value, section: $('daily-f-section').value, year: $('daily-f-year').value, q: $('daily-f-search').value.trim().toLowerCase() };
-  const students = d.students.filter((s) => (!f.campus || s.campus === f.campus) && (!f.department || s.department === f.department) && (!f.section || s.section === f.section) && (!f.year || s.year === f.year)
-    && (!f.q || (s.name || '').toLowerCase().includes(f.q) || (s.hrUsername || '').toLowerCase().includes(f.q)));
-  $('daily-note').textContent = `· ${students.length}${students.length !== d.students.length ? ' of ' + d.students.length : ''} students · ${d.days.length} day(s)`;
-  const fmtDay = (s) => { const dt = new Date(s + 'T00:00'); return isNaN(dt) ? s : dt.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
-  t.innerHTML =
-    `<thead><tr><th class="sticky-name">Student</th>${d.days.map((day) => `<th class="num">${esc(fmtDay(day))}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>` +
-    (students.length ? students.map((s) =>
-      `<tr><td class="sticky-name">${esc(s.name || s.hrUsername)}</td>${s.daily.map((n) => `<td class="num">${n ? n : '<span class="muted">·</span>'}</td>`).join('')}<td class="num">${s.total}</td></tr>`).join('')
-      : `<tr><td class="muted">No students match these filters.</td></tr>`) + `</tbody>`;
+
+function getFilteredDailyStudents() {
+  const d = dailyDataCache;
+  if (!d || !d.students) return [];
+  const f = {
+    campus: $('daily-f-campus')?.value || '',
+    department: $('daily-f-department')?.value || '',
+    section: $('daily-f-section')?.value || '',
+    year: $('daily-f-year')?.value || '',
+    q: ($('daily-f-search')?.value || '').trim().toLowerCase(),
+  };
+  return d.students.filter((s) =>
+    (!f.campus || s.campus === f.campus) &&
+    (!f.department || s.department === f.department) &&
+    (!f.section || s.section === f.section) &&
+    (!f.year || s.year === f.year) &&
+    (!f.q || (s.name || '').toLowerCase().includes(f.q) || (s.hrUsername || '').toLowerCase().includes(f.q))
+  );
 }
-['daily-f-campus', 'daily-f-department', 'daily-f-section', 'daily-f-year'].forEach((id) => $(id).addEventListener('change', drawDailyTable));
-$('daily-f-search').addEventListener('input', drawDailyTable);
+
+function drawDailyTable() {
+  const d = dailyDataCache; if (!d || !d.days) return;
+  const t = $('daily-table');
+  const allStudents = getFilteredDailyStudents();
+  $('daily-note').textContent = `· ${allStudents.length}${allStudents.length !== d.students.length ? ' of ' + d.students.length : ''} students · ${d.days.length} day(s)`;
+
+  // Compute stats per day for all filtered students
+  const dayStats = d.days.map((day, idx) => {
+    const doneList = allStudents.filter((s) => (s.daily[idx] || 0) > 0);
+    const totalQ = allStudents.reduce((sum, s) => sum + (s.daily[idx] || 0), 0);
+    return { count: doneList.length, totalQ };
+  });
+  const totalWithSolves = allStudents.filter((s) => (s.total || 0) > 0).length;
+
+  const total = allStudents.length;
+  const pages = Math.max(1, Math.ceil(total / DAILY_PAGE));
+  if (dailyPage > pages) dailyPage = pages;
+  const start = (dailyPage - 1) * DAILY_PAGE;
+  const students = allStudents.slice(start, start + DAILY_PAGE);
+
+  t.innerHTML =
+    `<thead>` +
+    `<tr>` +
+    `<th class="sticky-name">Student</th>` +
+    d.days.map((day, idx) =>
+      `<th class="num daily-col-hdr" data-day-idx="${idx}" title="Click to view all students who completed questions on ${esc(fmtDay(day))}" style="cursor:pointer">` +
+      `<div>${esc(fmtDay(day))}</div>` +
+      `<span class="chip" style="background:rgba(46,164,79,.18);color:var(--accent);font-size:.72rem;margin-top:2px;display:inline-block">${dayStats[idx].count} done</span>` +
+      `</th>`
+    ).join('') +
+    `<th class="num daily-col-hdr" data-day-idx="all" title="Click to view all active students" style="cursor:pointer">` +
+    `<div>Total</div>` +
+    `<span class="chip" style="background:rgba(31,111,235,.18);color:var(--accent2);font-size:.72rem;margin-top:2px;display:inline-block">${totalWithSolves} active</span>` +
+    `</th>` +
+    `</tr>` +
+    `<tr class="daily-summary-row" style="background:var(--surface2)">` +
+    `<td class="sticky-name" style="background:var(--surface2)"><b>Students Completed</b></td>` +
+    d.days.map((day, idx) =>
+      `<td class="num" style="padding:6px 10px">` +
+      (dayStats[idx].count > 0
+        ? `<button class="ghost sm daily-summary-btn" data-day-idx="${idx}" title="View ${dayStats[idx].count} student(s) who completed questions on ${esc(fmtDay(day))}" style="padding:2px 8px;font-size:.78rem;font-weight:700;color:var(--accent);border-color:rgba(46,164,79,.4);cursor:pointer">${dayStats[idx].count} done</button>`
+        : `<span class="muted">0</span>`) +
+      `</td>`
+    ).join('') +
+    `<td class="num" style="padding:6px 10px">` +
+    (totalWithSolves > 0
+      ? `<button class="ghost sm daily-summary-btn" data-day-idx="all" title="View all ${totalWithSolves} active student(s)" style="padding:2px 8px;font-size:.78rem;font-weight:700;color:var(--accent2);border-color:rgba(31,111,235,.4);cursor:pointer">${totalWithSolves} active</button>`
+      : `<span class="muted">0</span>`) +
+    `</td>` +
+    `</tr>` +
+    `</thead>` +
+    `<tbody>` +
+    (students.length ? students.map((s) =>
+      `<tr>` +
+      `<td class="sticky-name"><a class="user-link" data-user="${esc(s.hrUsername)}" title="Click to view student questions">${esc(s.name || s.hrUsername)}</a></td>` +
+      s.daily.map((n) =>
+        `<td class="num">` +
+        (n
+          ? `<a class="user-link" data-user="${esc(s.hrUsername)}" style="font-weight:700;color:var(--accent);cursor:pointer" title="Click to view questions solved by ${esc(s.name || s.hrUsername)}">${n}</a>`
+          : `<span class="muted">·</span>`) +
+        `</td>`
+      ).join('') +
+      `<td class="num"><a class="user-link" data-user="${esc(s.hrUsername)}" title="Click to view student questions">${s.total}</a></td>` +
+      `</tr>`
+    ).join('')
+      : `<tr><td colspan="${d.days.length + 2}" class="muted">No students match these filters.</td></tr>`) +
+    `</tbody>`;
+
+  const from = total ? start + 1 : 0;
+  if ($('daily-table-pager')) {
+    $('daily-table-pager').innerHTML = total > DAILY_PAGE
+      ? `<button class="ghost sm" id="dt-prev" ${dailyPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + DAILY_PAGE, total)} of ${total} · page ${dailyPage}/${pages}</span><button class="ghost sm" id="dt-next" ${dailyPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+    if (total > DAILY_PAGE) {
+      $('dt-prev')?.addEventListener('click', () => { if (dailyPage > 1) { dailyPage--; drawDailyTable(); } });
+      $('dt-next')?.addEventListener('click', () => { if (dailyPage < pages) { dailyPage++; drawDailyTable(); } });
+    }
+  }
+}
+['daily-f-campus', 'daily-f-department', 'daily-f-section', 'daily-f-year'].forEach((id) => $(id).addEventListener('change', () => { dailyPage = 1; drawDailyTable(); }));
+$('daily-f-search').addEventListener('input', () => { dailyPage = 1; drawDailyTable(); });
+
+// ---------- Daily popup modal logic ----------
+let dailyModalRows = [], dailyModalPage = 1, dailyModalSelectedDayIdx = null;
+const DAILY_MODAL_PAGE = 20;
+
+function openDailyModal(dayIdx) {
+  const d = dailyDataCache; if (!d || !d.days) return;
+  dailyModalSelectedDayIdx = dayIdx;
+  const isAll = dayIdx === 'all';
+  const dayStr = isAll ? null : d.days[Number(dayIdx)];
+  const students = getFilteredDailyStudents();
+
+  if (isAll) {
+    dailyModalRows = students
+      .filter((s) => (s.total || 0) > 0)
+      .map((s) => ({
+        ...s,
+        doneCount: (s.daily || []).reduce((a, b) => a + (b || 0), 0),
+      }))
+      .sort((a, b) => b.total - a.total || b.doneCount - a.doneCount);
+
+    const totalWindowQ = dailyModalRows.reduce((sum, s) => sum + s.doneCount, 0);
+    $('daily-modal-title').textContent = `⚡ ${dailyModalRows.length} active student(s)`;
+    $('daily-modal-subtitle').textContent = `Active students with solves · Solved in ${d.days.length}-day window: ${totalWindowQ}`;
+  } else {
+    const idx = Number(dayIdx);
+    dailyModalRows = students
+      .filter((s) => (s.daily[idx] || 0) > 0)
+      .map((s) => ({
+        ...s,
+        doneCount: s.daily[idx] || 0,
+      }))
+      .sort((a, b) => b.doneCount - a.doneCount || b.total - a.total);
+
+    const formattedDay = fmtDay(dayStr);
+    const totalQ = dailyModalRows.reduce((sum, s) => sum + s.doneCount, 0);
+    $('daily-modal-title').textContent = `⚡ ${dailyModalRows.length} student(s) completed questions on ${formattedDay}`;
+    $('daily-modal-subtitle').textContent = `Date: ${dayStr} · Total questions solved on this day: ${totalQ}`;
+  }
+
+  $('daily-modal-search').value = '';
+  dailyModalPage = 1;
+  renderDailyModalPage();
+  $('daily-modal').classList.remove('hidden');
+}
+
+function renderDailyModalPage() {
+  const q = ($('daily-modal-search')?.value || '').trim().toLowerCase();
+  const filtered = dailyModalRows.filter(
+    (s) =>
+      !q ||
+      (s.name || '').toLowerCase().includes(q) ||
+      (s.hrUsername || '').toLowerCase().includes(q) ||
+      (s.department || '').toLowerCase().includes(q) ||
+      (s.section || '').toLowerCase().includes(q) ||
+      (s.campus || '').toLowerCase().includes(q)
+  );
+
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / DAILY_MODAL_PAGE));
+  if (dailyModalPage > pages) dailyModalPage = pages;
+  const start = (dailyModalPage - 1) * DAILY_MODAL_PAGE;
+  const slice = filtered.slice(start, start + DAILY_MODAL_PAGE);
+
+  const isAll = dailyModalSelectedDayIdx === 'all';
+  const countColTitle = isAll ? 'Window Solved' : 'Completed on Date';
+
+  $('daily-modal-table').innerHTML =
+    `<thead><tr>` +
+    `<th style="width:40px">#</th>` +
+    `<th>Student</th>` +
+    `<th>HR username</th>` +
+    `<th>Campus</th>` +
+    `<th>Dept</th>` +
+    `<th>Section</th>` +
+    `<th>Year</th>` +
+    `<th class="num">${countColTitle}</th>` +
+    `<th class="num">Total Solved</th>` +
+    `<th style="width:110px;text-align:center">Questions</th>` +
+    `</tr></thead><tbody>` +
+    (slice.length
+      ? slice
+          .map(
+            (s, idx) =>
+              `<tr>` +
+              `<td class="num">${start + idx + 1}</td>` +
+              `<td><a class="user-link view-perf-link" data-user="${esc(s.hrUsername)}" title="Click to view question completion breakdown">${esc(s.name || s.hrUsername)}</a></td>` +
+              `<td><a class="user-link view-perf-link" data-user="${esc(s.hrUsername)}">${esc(s.hrUsername || '—')}</a></td>` +
+              `<td>${esc(s.campus || '—')}</td>` +
+              `<td>${esc(s.department || '—')}</td>` +
+              `<td>${esc(s.section || '—')}</td>` +
+              `<td>${esc(s.year || '—')}</td>` +
+              `<td class="num"><b><span class="chip" style="background:rgba(46,164,79,.15);color:var(--accent);font-size:.82rem">+${s.doneCount}</span></b></td>` +
+              `<td class="num"><b>${s.total}</b></td>` +
+              `<td style="text-align:center"><button class="ghost sm view-perf-btn" data-user="${esc(s.hrUsername)}" style="padding:3px 8px;font-size:.76rem">View 📊</button></td>` +
+              `</tr>`
+          )
+          .join('')
+      : `<tr><td colspan="10" class="muted">No students found.</td></tr>`) +
+    `</tbody>`;
+
+  const from = total ? start + 1 : 0;
+  $('daily-modal-count').textContent = q ? `${total} of ${dailyModalRows.length} matching` : `${total} student${total === 1 ? '' : 's'}`;
+  $('daily-pager').innerHTML =
+    total > DAILY_MODAL_PAGE
+      ? `<button class="ghost sm" id="daily-prev" ${dailyModalPage <= 1 ? 'disabled' : ''}>‹ Prev</button>` +
+        `<span class="muted">${from}–${Math.min(start + DAILY_MODAL_PAGE, total)} of ${total} · page ${dailyModalPage}/${pages}</span>` +
+        `<button class="ghost sm" id="daily-next" ${dailyModalPage >= pages ? 'disabled' : ''}>Next ›</button>`
+      : '';
+
+  if (total > DAILY_MODAL_PAGE) {
+    $('daily-prev')?.addEventListener('click', () => {
+      if (dailyModalPage > 1) {
+        dailyModalPage--;
+        renderDailyModalPage();
+      }
+    });
+    $('daily-next')?.addEventListener('click', () => {
+      if (dailyModalPage < pages) {
+        dailyModalPage++;
+        renderDailyModalPage();
+      }
+    });
+  }
+}
+
+$('daily-table')?.addEventListener('click', (e) => {
+  const trigger = e.target.closest('.daily-col-hdr, .daily-summary-btn');
+  if (trigger && trigger.dataset.dayIdx != null) {
+    e.preventDefault();
+    openDailyModal(trigger.dataset.dayIdx);
+    return;
+  }
+  const u = e.target.closest('.user-link[data-user]');
+  if (u && u.dataset.user) {
+    e.preventDefault();
+    openPerf(u.dataset.user, dailyContestId);
+  }
+});
+
+$('daily-modal-close')?.addEventListener('click', () => $('daily-modal').classList.add('hidden'));
+$('daily-modal')?.addEventListener('click', (e) => { if (e.target.id === 'daily-modal') $('daily-modal').classList.add('hidden'); });
+$('daily-modal-search')?.addEventListener('input', () => { dailyModalPage = 1; renderDailyModalPage(); });
+$('daily-modal-table')?.addEventListener('click', (e) => {
+  const target = e.target.closest('.view-perf-btn, .view-perf-link, .user-link[data-user]');
+  if (target && target.dataset.user) {
+    e.preventDefault();
+    openPerf(target.dataset.user, dailyContestId);
+  }
+});
 
 // ---------- Topics tab ----------
 let topicsCollegeId = '', topicsContestId = '', topicsContests = [];
@@ -991,7 +1727,6 @@ async function loadTopicVideos() {
     `<thead><tr><th>Topic</th><th>Video links (one per line)</th></tr></thead><tbody>` +
     d.topics.map((t) => `<tr><td>${esc(t.name)}</td><td><textarea class="tv-in" data-topic="${esc(t.name)}" rows="2" placeholder="https://youtu.be/…&#10;https://youtu.be/… (one per line)" style="min-width:300px">${esc((t.videos || []).join('\n'))}</textarea></td></tr>`).join('') +
     `</tbody>`;
-  loadQuestionCategories();
 }
 const QCATS = [['', '—'], ['inclass', 'In-class'], ['postclass', 'Post-class'], ['challenges', 'Challenges']];
 
@@ -1054,35 +1789,64 @@ $('perf-close').addEventListener('click', () => $('perf-modal').classList.add('h
 $('perf-modal').addEventListener('click', (e) => { if (e.target.id === 'perf-modal') $('perf-modal').classList.add('hidden'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('perf-modal').classList.add('hidden'); });
 
-function openPerf(hrUsername) {
-  const r = joinedRows().find((x) => x.hrUsername.toLowerCase() === hrUsername.toLowerCase());
-  if (!r) return;
-  const u = dashData?.users.find((x) => x.username.toLowerCase() === hrUsername.toLowerCase());
-  $('perf-title').textContent = r.name || hrUsername;
+async function openPerf(hrUsername, optContestId) {
+  if (!hrUsername) return;
+  const username = String(hrUsername).trim();
+  const cid = optContestId || (document.querySelector('#tabs .tab.active')?.dataset.tab === 'daily' ? dailyContestId : selectedContestId);
+  
+  let dData = dashData;
+  let dTopics = dashTopics;
+  
+  // If viewing a different contest from the one in dashData, load its dashboard
+  if (cid && (!dData || String(selectedContestId) !== String(cid))) {
+    try {
+      const res = await api('/api/contest-dashboard/' + cid);
+      dData = res.dashboard;
+      dTopics = res.topics || {};
+    } catch (e) {
+      console.warn('Could not fetch contest dashboard:', e);
+    }
+  }
+
+  const r = (dailyDataCache?.students || roster || []).find((x) => x.hrUsername && x.hrUsername.toLowerCase() === username.toLowerCase()) ||
+            joinedRows().find((x) => x.hrUsername && x.hrUsername.toLowerCase() === username.toLowerCase()) ||
+            { name: username, hrUsername: username };
+
+  const u = dData?.users?.find((x) => x.username && x.username.toLowerCase() === username.toLowerCase());
+
+  $('perf-title').textContent = r.name || username;
   $('perf-meta').innerHTML = [
-    `@${esc(hrUsername)}`, r.registerNo && `Reg: ${esc(r.registerNo)}`, r.department && esc(r.department),
-    r.section && `Sec ${esc(r.section)}`, r.year && `Year ${esc(r.year)}`, r.email && esc(r.email),
+    `@${esc(username)}`,
+    r.registerNo && `Reg: ${esc(r.registerNo)}`,
+    r.campus && esc(r.campus),
+    r.department && esc(r.department),
+    r.section && `Sec ${esc(r.section)}`,
+    r.year && `Year ${esc(r.year)}`,
+    r.email && esc(r.email),
   ].filter(Boolean).join(' · ');
 
-  if (!dashData || !u) {
+  if (!dData || !u) {
     $('perf-stats').innerHTML = `<div class="stat"><div class="value">—</div><div class="label">No course data</div></div>`;
-    $('perf-topics').innerHTML = `<p class="muted">${dashData ? 'This student did not appear in the course scrape.' : 'No course synced yet for this college.'}</p>`;
+    $('perf-topics').innerHTML = `<p class="muted">${dData ? 'This student did not appear in the course scrape.' : 'No course synced yet for this college.'}</p>`;
     $('perf-table').innerHTML = '';
     $('perf-modal').classList.remove('hidden');
     return;
   }
 
-  const totalQ = dashData.summary.totalQuestions;
-  const contestRank = dashData.users.slice().sort((a, b) => b.computedScore - a.computedScore).findIndex((x) => x.username === u.username) + 1;
+  const totalQ = dData.summary.totalQuestions;
+  const contestRank = dData.users.slice().sort((a, b) => b.computedScore - a.computedScore).findIndex((x) => x.username === u.username) + 1;
   $('perf-stats').innerHTML = [
-    ['Solved', `${u.solved}/${totalQ}`], ['Score', u.computedScore], ['Completion', Math.round((u.solved / totalQ) * 100) + '%'],
-    ['Attempted', u.attempted], ['Course rank', `#${contestRank}`],
+    ['Solved', `${u.solved}/${totalQ}`],
+    ['Score', u.computedScore],
+    ['Completion', Math.round((u.solved / totalQ) * 100) + '%'],
+    ['Attempted', u.attempted],
+    ['Course rank', contestRank > 0 ? `#${contestRank}` : '—'],
   ].map(([l, v]) => `<div class="stat"><div class="value">${v}</div><div class="label">${l}</div></div>`).join('');
 
   // Per-topic breakdown (parsed from "Topic - Title")
   const topicMap = new Map();
-  for (const q of dashData.questions) {
-    const t = dashTopics[q.name] || splitTitle(q.name).tag || 'Other';
+  for (const q of dData.questions) {
+    const t = dTopics[q.name] || splitTitle(q.name).tag || 'Other';
     if (!topicMap.has(t)) topicMap.set(t, { total: 0, solved: 0 });
     const e = topicMap.get(t); e.total++; if (u.questionStatus[q.name]?.solved) e.solved++;
   }
@@ -1092,28 +1856,29 @@ function openPerf(hrUsername) {
       return `<span class="topic-tag" data-topic="${esc(t)}" style="cursor:pointer"><b>${esc(t)}</b> <span class="badge ${cls}">${e.solved}/${e.total}</span></span>`;
     }).join('');
 
-  perfState = { u };
+  perfState = { u, dData, dTopics };
   perfTopicFilter = null;
   renderPerfTable();
   $('perf-modal').classList.remove('hidden');
 }
 let perfState = null, perfTopicFilter = null;
-const perfTopicOf = (q) => dashTopics[q.name] || splitTitle(q.name).tag || 'Other';
+const perfTopicOf = (q) => (perfState?.dTopics && perfState.dTopics[q.name]) || splitTitle(q.name).tag || 'Other';
 function renderPerfTable() {
   if (!perfState) return;
-  const u = perfState.u;
-  const rows = dashData.questions
+  const { u, dData } = perfState;
+  const questions = dData?.questions || [];
+  const rows = questions
     .filter((q) => !perfTopicFilter || perfTopicOf(q) === perfTopicFilter)
     .map((q) => ({ q, st: u.questionStatus[q.name] || { score: 0, points: q.points, solved: false, attempted: false } }));
   $('perf-table').innerHTML =
     `<thead><tr><th>#</th><th>Question</th><th>Status</th><th class="num">Score</th></tr></thead><tbody>` +
-    rows.map(({ q, st }, i) => {
+    (rows.length ? rows.map(({ q, st }, i) => {
       const cls = st.solved ? 'solved' : st.attempted ? 'attempted' : 'none';
       const txt = st.solved ? 'Solved' : st.attempted ? 'Attempted' : 'Not attempted';
       const url = questionUrl(q);
       const name = url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(q.name)}</a>` : esc(q.name);
       return `<tr><td class="num">${i + 1}</td><td>${name}</td><td><span class="badge ${cls}">${txt}</span></td><td class="num">${st.score || 0} / ${q.points}</td></tr>`;
-    }).join('') + `</tbody>`;
+    }).join('') : `<tr><td colspan="4" class="muted">No questions in this topic.</td></tr>`) + `</tbody>`;
   // highlight the active topic tag
   document.querySelectorAll('#perf-topics .topic-tag').forEach((el) => el.classList.toggle('active-filter', el.dataset.topic === perfTopicFilter));
 }
@@ -1127,23 +1892,28 @@ $('perf-topics').addEventListener('click', (e) => {
 // ---------- Sync (scrape) ----------
 function syncContest() {
   if (!selectedContestId) return setStatus($('dash-status'), 'Add or select a course first.', 'err');
-  if (!hrToken) { $('connect-modal').classList.remove('hidden'); return; }
   const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
   if (!ct || !ct.slug) return setStatus($('dash-status'), 'This course has no link — delete and re-add it with a link.', 'err');
   $('sync-btn').disabled = true;
   $('dash-progress').classList.remove('hidden'); $('dash-prog-lab').textContent = 'Starting…'; $('dash-prog-fill').style.width = '0%';
   setStatus($('dash-status'), `Syncing ${ct.name}…`, 'info');
-  const es = new EventSource('/api/scrape-stream?' + new URLSearchParams({ adminToken, hrToken, contestId: selectedContestId }));
+  const params = { adminToken, contestId: selectedContestId };
+  if (hrToken) params.hrToken = hrToken;
+  const es = new EventSource('/api/scrape-stream?' + new URLSearchParams(params));
   es.addEventListener('progress', (ev) => { const p = JSON.parse(ev.data); $('dash-prog-lab').textContent = p.phase === 'leaderboard' ? `Fetching leaderboard… ${p.completed}` : `${p.completed} / ${p.total} users`; $('dash-prog-fill').style.width = (p.total ? Math.round(p.completed / p.total * 100) : 8) + '%'; });
   es.addEventListener('done', (ev) => { es.close(); $('sync-btn').disabled = false; $('dash-prog-fill').style.width = '100%'; const d = JSON.parse(ev.data); setStatus($('dash-status'), `Synced — ${d.summary.totalUsers} users, ${d.summary.totalQuestions} questions.`, 'ok'); clearDashCache(selectedContestId); loadDashboard(); });
-  es.addEventListener('failed', (ev) => { es.close(); $('sync-btn').disabled = false; $('dash-progress').classList.add('hidden'); setStatus($('dash-status'), JSON.parse(ev.data).error, 'err'); });
+  es.addEventListener('failed', (ev) => {
+    es.close(); $('sync-btn').disabled = false; $('dash-progress').classList.add('hidden');
+    const err = JSON.parse(ev.data).error || 'Sync failed';
+    setStatus($('dash-status'), err, 'err');
+    if (!hrToken && (err.includes('Connect') || err.includes('HR_EMAIL'))) $('connect-modal').classList.remove('hidden');
+  });
   es.onerror = () => { es.close(); $('sync-btn').disabled = false; };
 }
 
 // ---------- Sync ALL colleges / all contests ----------
 $('sync-all-btn').addEventListener('click', syncAll);
 function syncAll() {
-  if (!hrToken) { $('connect-modal').classList.remove('hidden'); return; }
   if (!confirm('Scrape every course in every college? This can take a long while.')) return;
   const btns = ['sync-btn', 'sync-all-btn'];
   btns.forEach((b) => { $(b).disabled = true; });
@@ -1151,7 +1921,9 @@ function syncAll() {
   setStatus($('dash-status'), 'Syncing all colleges…', 'info');
   const done = [];
   const stop = () => { btns.forEach((b) => { $(b).disabled = false; }); };
-  const es = new EventSource('/api/sync-all-stream?' + new URLSearchParams({ adminToken, hrToken }));
+  const params = { adminToken };
+  if (hrToken) params.hrToken = hrToken;
+  const es = new EventSource('/api/sync-all-stream?' + new URLSearchParams(params));
   es.addEventListener('start', (ev) => { const d = JSON.parse(ev.data); setStatus($('dash-status'), `Syncing ${d.total} course(s) across all colleges…`, 'info'); });
   es.addEventListener('contest', (ev) => {
     const p = JSON.parse(ev.data);
