@@ -803,7 +803,7 @@ async function contestSharePayload(contest) {
     contest.slug ? db.getTopicVideos(contest.slug) : {},
     contest.slug ? db.getQuestionCategories(contest.slug) : {},
   ]);
-  const roster = rosterRaw.map((s) => ({ name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo }));
+  const roster = rosterRaw.map((s) => ({ id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo }));
   const daily = await computeDaily(contest, 10);
   return { college: contest.college, contest: { name: contest.name }, dashboard: dash, topics, roster, topicVideos, categories, daily, tabs: await getSharedTabs() };
 }
@@ -844,6 +844,62 @@ app.get('/api/shared/:token/sync-stream', async (req, res) => {
     await streamSingleContestScrape({ session, contest, send, isAborted: () => aborted });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
+});
+
+app.post('/api/shared/:token/students', async (req, res) => {
+  try {
+    const contest = await db.getContestByShareToken(req.params.token);
+    if (!contest) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
+
+    const rawStudents = Array.isArray(req.body?.students)
+      ? req.body.students
+      : (req.body ? [req.body] : []);
+
+    const cleanUser = (v) => {
+      v = String(v || '').trim();
+      if (!v) return '';
+      if (v.includes('/')) { const p = v.split('/').filter(Boolean); return p[p.length - 1]; }
+      return v.replace(/^@/, '');
+    };
+
+    const synthKey = (s, idx) => 'unmatched:' + String(s.registerNo || s.email || s.name || ('add_' + Date.now() + '_' + idx)).trim().toLowerCase();
+
+    const prepared = [];
+    rawStudents.forEach((s, idx) => {
+      const raw = cleanUser(s.hrUsername || s.username || '');
+      const lc = raw.toLowerCase();
+      const valid = raw && !PLACEHOLDER_USERNAMES.has(lc);
+      const usernameKey = valid ? lc : synthKey(s, idx);
+      if (s.name || valid || s.registerNo || s.email) {
+        prepared.push({
+          name: String(s.name || raw || '').trim(),
+          hrUsername: valid ? raw : '',
+          usernameKey,
+          registerNo: String(s.registerNo || '').trim(),
+          email: String(s.email || '').trim(),
+          campus: String(s.campus || '').trim(),
+          department: String(s.department || '').trim(),
+          section: String(s.section || '').trim(),
+          year: String(s.year || '').trim(),
+        });
+      }
+    });
+
+    if (!prepared.length) {
+      return res.status(400).json({ error: 'Please provide at least a student name or HackerRank username.' });
+    }
+
+    await db.upsertStudents(contest.college, prepared);
+    if (contest.id) {
+      await db.assignStudentsToContest(contest.id, prepared.map((s) => s.usernameKey));
+    }
+
+    const collegeStudents = await db.listStudents({ college: contest.college });
+    const keySet = new Set(prepared.map((s) => s.usernameKey));
+    const addedList = collegeStudents.filter((s) => keySet.has(s.usernameKey));
+
+    res.json({ ok: true, count: prepared.length, students: addedList, student: addedList[0] || null });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.put('/api/shared/:token/students/:id', async (req, res) => {
@@ -948,6 +1004,69 @@ app.get('/api/college/:token/sync-stream', async (req, res) => {
     if (!aborted) send('done', { ok, total: contests.length, failures, college: college.name });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
+});
+
+app.post('/api/college/:token/students', async (req, res) => {
+  try {
+    const id = await collegeIdForToken(req.params.token);
+    if (!id) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
+    const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
+    if (!college) return res.status(404).json({ error: 'College not found.' });
+
+    const { contestId } = req.body || {};
+    const rawStudents = Array.isArray(req.body?.students)
+      ? req.body.students
+      : (req.body ? [req.body] : []);
+
+    const cleanUser = (v) => {
+      v = String(v || '').trim();
+      if (!v) return '';
+      if (v.includes('/')) { const p = v.split('/').filter(Boolean); return p[p.length - 1]; }
+      return v.replace(/^@/, '');
+    };
+
+    const synthKey = (s, idx) => 'unmatched:' + String(s.registerNo || s.email || s.name || ('add_' + Date.now() + '_' + idx)).trim().toLowerCase();
+
+    const prepared = [];
+    rawStudents.forEach((s, idx) => {
+      const raw = cleanUser(s.hrUsername || s.username || '');
+      const lc = raw.toLowerCase();
+      const valid = raw && !PLACEHOLDER_USERNAMES.has(lc);
+      const usernameKey = valid ? lc : synthKey(s, idx);
+      if (s.name || valid || s.registerNo || s.email) {
+        prepared.push({
+          name: String(s.name || raw || '').trim(),
+          hrUsername: valid ? raw : '',
+          usernameKey,
+          registerNo: String(s.registerNo || '').trim(),
+          email: String(s.email || '').trim(),
+          campus: String(s.campus || '').trim(),
+          department: String(s.department || '').trim(),
+          section: String(s.section || '').trim(),
+          year: String(s.year || '').trim(),
+        });
+      }
+    });
+
+    if (!prepared.length) {
+      return res.status(400).json({ error: 'Please provide at least a student name or HackerRank username.' });
+    }
+
+    await db.upsertStudents(college.name, prepared);
+
+    if (contestId) {
+      const contest = await db.getContest(contestId);
+      if (contest && contest.college === college.name) {
+        await db.assignStudentsToContest(contest.id, prepared.map((s) => s.usernameKey));
+      }
+    }
+
+    const collegeStudents = await db.listStudents({ college: college.name });
+    const keySet = new Set(prepared.map((s) => s.usernameKey));
+    const addedList = collegeStudents.filter((s) => keySet.has(s.usernameKey));
+
+    res.json({ ok: true, count: prepared.length, students: addedList, student: addedList[0] || null });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.put('/api/college/:token/students/:id', async (req, res) => {

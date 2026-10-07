@@ -69,7 +69,12 @@
 
     <div class="card">
       <div class="card-head">
-        <h3>Students</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0">Students</h3>
+          <button id="add-student-btn" class="primary sm" title="Add a new student" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+            <span style="font-size:1.05rem;line-height:1;margin-top:-1px">＋</span> Add Student
+          </button>
+        </div>
         <div class="form-row" style="margin:0">
           <select id="f-campus"><option value="">All campuses</option></select>
           <select id="f-department"><option value="">All departments</option></select>
@@ -153,6 +158,76 @@
       <div id="perf-stats"></div>
       <div id="perf-topics"></div>
       <div class="table-scroll"><table id="perf-table" class="data-table"></table></div>
+    </div>
+  </div>
+
+  <!-- Add Student Modal -->
+  <div id="add-student-modal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:580px">
+      <div class="card-head" style="margin-bottom:8px">
+        <h3 style="margin:0;display:flex;align-items:center;gap:6px"><span>＋</span> Add Student</h3>
+        <button id="add-st-close" class="ghost sm" title="Close">✕</button>
+      </div>
+
+      <div class="subtabs" style="margin:4px 0 14px">
+        <button id="add-st-tab-single" class="subtab active">Single Student</button>
+        <button id="add-st-tab-bulk" class="subtab">Bulk Paste</button>
+      </div>
+
+      <!-- Single Student Form -->
+      <div id="add-st-single-pane">
+        <div class="form-row">
+          <label class="inline-label" style="flex:1">Name:
+            <input id="add-st-name" placeholder="Student name *" style="flex:1" />
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="inline-label" style="flex:1">HackerRank Username:
+            <input id="add-st-username" placeholder="HackerRank username or profile URL *" style="flex:1" />
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="inline-label" style="flex:1">Register No:
+            <input id="add-st-reg" placeholder="Register number" style="flex:1" />
+          </label>
+          <label class="inline-label" style="flex:1">Email:
+            <input id="add-st-email" type="email" placeholder="Email" style="flex:1" />
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="inline-label" style="flex:1">Campus:
+            <input id="add-st-campus" placeholder="Campus" list="add-st-campus-list" style="flex:1" />
+            <datalist id="add-st-campus-list"></datalist>
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="inline-label" style="flex:1">Dept:
+            <input id="add-st-dept" placeholder="Department" list="add-st-dept-list" style="flex:1" />
+            <datalist id="add-st-dept-list"></datalist>
+          </label>
+          <label class="inline-label" style="flex:1">Section:
+            <input id="add-st-sec" placeholder="Section" list="add-st-sec-list" style="flex:1" />
+            <datalist id="add-st-sec-list"></datalist>
+          </label>
+          <label class="inline-label" style="flex:1">Year:
+            <input id="add-st-year" placeholder="Year" list="add-st-year-list" style="flex:1" />
+            <datalist id="add-st-year-list"></datalist>
+          </label>
+        </div>
+      </div>
+
+      <!-- Bulk Paste Pane -->
+      <div id="add-st-bulk-pane" class="hidden">
+        <p class="muted" style="margin:0 0 8px">Paste one student per line. Format: <code>Name, username, reg, email, dept, section, year</code> (commas or tabs). A line with just a username is also fine.</p>
+        <textarea id="add-st-bulk-text" rows="7" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem" placeholder="Kavin A S, kavin_hr&#10;Kavipriya P, kavipriya22&#10;hema_t"></textarea>
+        <div id="add-st-bulk-count" class="muted" style="margin-top:4px"></div>
+      </div>
+
+      <div class="form-row" style="margin-top:16px;justify-content:flex-end;gap:8px">
+        <button id="add-st-cancel" class="ghost">Cancel</button>
+        <button id="add-st-save" class="primary">＋ Add Student</button>
+      </div>
+      <div id="add-st-status" class="status" style="margin-top:8px"></div>
     </div>
   </div>
 

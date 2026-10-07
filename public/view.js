@@ -404,9 +404,182 @@ function renderStudents() {
   if (all.length > STUDENTS_PAGE) { $('st-prev').addEventListener('click', () => { if (studentsPage > 1) { studentsPage--; renderStudents(); } }); $('st-next').addEventListener('click', () => { if (studentsPage < pages) { studentsPage++; renderStudents(); } }); }
 }
 
+// Student Add Modal handlers
+function populateAddStudentDatalists() {
+  const uniq = (key) => Array.from(new Set(roster.map((s) => s[key]).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const setOpts = (id, arr) => {
+    const dl = $(id);
+    if (dl) dl.innerHTML = arr.map((v) => `<option value="${esc(v)}"></option>`).join('');
+  };
+  setOpts('add-st-campus-list', uniq('campus'));
+  setOpts('add-st-dept-list', uniq('department'));
+  setOpts('add-st-sec-list', uniq('section'));
+  setOpts('add-st-year-list', uniq('year'));
+}
+
+function setAddStudentMode(mode) {
+  const isSingle = mode === 'single';
+  $('add-st-tab-single')?.classList.toggle('active', isSingle);
+  $('add-st-tab-bulk')?.classList.toggle('active', !isSingle);
+  $('add-st-single-pane')?.classList.toggle('hidden', !isSingle);
+  $('add-st-bulk-pane')?.classList.toggle('hidden', isSingle);
+  if ($('add-st-save')) $('add-st-save').textContent = isSingle ? '＋ Add Student' : '＋ Add Students';
+}
+
+function openAddStudentModal() {
+  $('add-st-name').value = '';
+  $('add-st-username').value = '';
+  $('add-st-reg').value = '';
+  $('add-st-email').value = '';
+  $('add-st-campus').value = $('f-campus')?.value || '';
+  $('add-st-dept').value = $('f-department')?.value || '';
+  $('add-st-sec').value = $('f-section')?.value || '';
+  $('add-st-year').value = $('f-year')?.value || '';
+  $('add-st-bulk-text').value = '';
+  $('add-st-bulk-count').textContent = '';
+
+  const stat = $('add-st-status');
+  if (stat) { stat.textContent = ''; stat.className = 'status'; }
+
+  setAddStudentMode('single');
+  populateAddStudentDatalists();
+  $('add-student-modal')?.classList.remove('hidden');
+}
+
+$('add-student-btn')?.addEventListener('click', () => openAddStudentModal());
+$('add-st-tab-single')?.addEventListener('click', () => setAddStudentMode('single'));
+$('add-st-tab-bulk')?.addEventListener('click', () => setAddStudentMode('bulk'));
+$('add-st-close')?.addEventListener('click', () => $('add-student-modal')?.classList.add('hidden'));
+$('add-st-cancel')?.addEventListener('click', () => $('add-student-modal')?.classList.add('hidden'));
+$('add-student-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'add-student-modal') $('add-student-modal').classList.add('hidden');
+});
+
+function parseBulkText(text) {
+  const out = [];
+  const cleanUser = (v) => { v = String(v || '').trim(); if (!v) return ''; if (v.includes('/')) { const p = v.split('/').filter(Boolean); return p[p.length - 1]; } return v.replace(/^@/, ''); };
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim(); if (!line) continue;
+    const parts = line.split(/\t|,/).map((s) => s.trim());
+    let name = '', user = '', rest = [];
+    if (parts.length === 1) { user = cleanUser(parts[0]); name = user; }
+    else { name = parts[0]; user = cleanUser(parts[1]); rest = parts.slice(2); }
+    if (!user && !name) continue;
+    out.push({
+      name: name || user,
+      hrUsername: user,
+      registerNo: rest[0] || '',
+      email: rest[1] || '',
+      department: rest[2] || '',
+      section: rest[3] || '',
+      year: rest[4] || '',
+      campus: rest[5] || ''
+    });
+  }
+  return out;
+}
+
+$('add-st-bulk-text')?.addEventListener('input', () => {
+  const n = parseBulkText($('add-st-bulk-text').value).length;
+  $('add-st-bulk-count').textContent = n ? `${n} student${n > 1 ? 's' : ''} detected` : '';
+});
+
+$('add-st-save')?.addEventListener('click', async () => {
+  const isSingle = $('add-st-tab-single')?.classList.contains('active');
+  const stat = $('add-st-status');
+  const url = isCollege
+    ? `/api/college/${token}/students`
+    : `/api/shared/${token}/students`;
+
+  let payload = {};
+  if (isSingle) {
+    const name = $('add-st-name').value.trim();
+    const hrUsername = $('add-st-username').value.trim();
+    const registerNo = $('add-st-reg').value.trim();
+    const email = $('add-st-email').value.trim();
+    const campus = $('add-st-campus').value.trim();
+    const department = $('add-st-dept').value.trim();
+    const section = $('add-st-sec').value.trim();
+    const year = $('add-st-year').value.trim();
+
+    if (!name && !hrUsername) {
+      if (stat) { stat.textContent = 'Please provide a student name or HackerRank username.'; stat.className = 'status err'; }
+      return;
+    }
+    payload = {
+      name, hrUsername, registerNo, email, campus, department, section, year,
+      contestId: (isCollege && currentContestId) ? currentContestId : undefined
+    };
+  } else {
+    const students = parseBulkText($('add-st-bulk-text').value);
+    if (!students.length) {
+      if (stat) { stat.textContent = 'No valid student lines found. Enter at least one name or username.'; stat.className = 'status err'; }
+      return;
+    }
+    payload = {
+      students,
+      contestId: (isCollege && currentContestId) ? currentContestId : undefined
+    };
+  }
+
+  if (stat) { stat.textContent = 'Adding student…'; stat.className = 'status info'; }
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Failed to add student.');
+
+    const newStudents = d.students || (d.student ? [d.student] : []);
+    newStudents.forEach((newSt) => {
+      const idx = roster.findIndex((x) => String(x.id) === String(newSt.id) || (newSt.hrUsername && x.hrUsername && x.hrUsername.toLowerCase() === newSt.hrUsername.toLowerCase()));
+      if (idx !== -1) {
+        roster[idx] = { ...roster[idx], ...newSt };
+      } else {
+        roster.push(newSt);
+      }
+      if (dailyData && dailyData.students) {
+        const dIdx = dailyData.students.findIndex((x) => String(x.id) === String(newSt.id) || (newSt.hrUsername && x.hrUsername && x.hrUsername.toLowerCase() === newSt.hrUsername.toLowerCase()));
+        if (dIdx !== -1) {
+          dailyData.students[dIdx] = { ...dailyData.students[dIdx], ...newSt };
+        } else {
+          dailyData.students.push({
+            ...newSt,
+            daily: (dailyData.days || []).map(() => 0),
+            total: 0
+          });
+        }
+      }
+    });
+
+    fillFilters();
+    renderSummary();
+    renderTopicAnalysis();
+    renderCompletion();
+    renderCategoryChart();
+    renderStudents();
+    renderDaily();
+
+    if (stat) {
+      const count = newStudents.length || 1;
+      stat.textContent = `${count} student${count > 1 ? 's' : ''} added successfully!`;
+      stat.className = 'status ok';
+    }
+
+    setTimeout(() => {
+      $('add-student-modal')?.classList.add('hidden');
+    }, 600);
+  } catch (e) {
+    if (stat) { stat.textContent = e.message || 'Failed to add student.'; stat.className = 'status err'; }
+  }
+});
+
 // Student Edit Modal handlers (read-only / shared view)
 function openEditStudent(id) {
-  const s = roster.find((x) => String(x.id) === String(id));
+  const s = roster.find((x) => String(x.id) === String(id) || (x.hrUsername && String(x.hrUsername) === String(id)));
   if (!s) return;
   $('edit-st-id').value = s.id;
   $('edit-st-name').value = s.name || '';
