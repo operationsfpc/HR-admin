@@ -796,16 +796,17 @@ app.post('/api/shared-tabs', requireAdmin, async (req, res) => {
 
 // Build the read-only payload for one contest (shared by contest + college links).
 async function contestSharePayload(contest) {
-  const [dash, topics, rosterRaw, topicVideos, categories] = await Promise.all([
+  const [dash, topics, rosterRaw, topicVideos, categories, facets] = await Promise.all([
     contest.slug ? cachedLatestScrape(contest.slug) : null,
     contest.slug ? db.getTopics(contest.slug) : {},
     db.listStudentsForContest(contest.id),
     contest.slug ? db.getTopicVideos(contest.slug) : {},
     contest.slug ? db.getQuestionCategories(contest.slug) : {},
+    db.getStudentFacets(contest.college),
   ]);
   const roster = rosterRaw.map((s) => ({ id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo }));
   const daily = await computeDaily(contest, 10);
-  return { college: contest.college, contest: { name: contest.name }, dashboard: dash, topics, roster, topicVideos, categories, daily, tabs: await getSharedTabs() };
+  return { college: contest.college, contest: { name: contest.name }, dashboard: dash, topics, roster, topicVideos, categories, daily, facets, tabs: await getSharedTabs() };
 }
 async function collegeAttendance(collegeName) {
   const college = await db.getCollegeByName(collegeName);
@@ -820,6 +821,13 @@ app.get('/api/shared/:token', async (req, res) => {
     const contest = await db.getContestByShareToken(req.params.token);
     if (!contest) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
     res.json(await contestSharePayload(contest));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/shared/:token/facets', async (req, res) => {
+  try {
+    const contest = await db.getContestByShareToken(req.params.token);
+    if (!contest) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
+    res.json(await db.getStudentFacets(contest.college));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/shared/:token/attendance', async (req, res) => {
@@ -960,6 +968,15 @@ app.get('/api/college/:token/attendance', async (req, res) => {
     const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
     res.json(await collegeAttendance(college ? college.name : ''));
   } catch (e) { res.status(200).json({ error: e.message, sheets: [] }); }
+});
+app.get('/api/college/:token/facets', async (req, res) => {
+  try {
+    const id = await collegeIdForToken(req.params.token);
+    if (!id) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
+    const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
+    if (!college) return res.status(404).json({ error: 'College not found.' });
+    res.json(await db.getStudentFacets(college.name));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Read-only college sync stream using server environment credentials (no prompt required)

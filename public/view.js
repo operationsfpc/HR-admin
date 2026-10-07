@@ -9,7 +9,7 @@ const heatColor = (p) => `hsl(${Math.round((p / 100) * 120)},70%,${p === 0 ? 30 
 function questionUrl(q) { const u = q.url; if (!u || u === '#') return null; return u.startsWith('http') ? u : 'https://www.hackerrank.com' + (u.startsWith('/') ? u : '/' + u); }
 function splitTitle(name) { const m = String(name).split(/\s+[–—-]\s+/); return m.length >= 2 ? { tag: m[0].trim(), title: m.slice(1).join(' - ').trim() } : { tag: '', title: String(name) }; }
 
-let dashData = null, dashTopics = {}, dashCats = {}, roster = [], dailyData = null;
+let dashData = null, dashTopics = {}, dashCats = {}, roster = [], dailyData = null, collegeFacets = { departments: [], sections: [], years: [], campuses: [] };
 let studentsPage = 1; const STUDENTS_PAGE = 50;
 let currentContestId = '';
 let taRows = [];
@@ -32,6 +32,7 @@ function applyTabs(tabs) {
 function applyPayload(d) {
   if (d.tabs) applyTabs(d.tabs);
   dashData = d.dashboard; dashTopics = d.topics || {}; dashCats = d.categories || {}; roster = d.roster || []; dailyData = d.daily || null;
+  if (d.facets) collegeFacets = d.facets;
   $('view-title').textContent = isCollege ? `${d.college}` : `${d.contest.name} — ${d.college}`;
   document.title = isCollege ? `${d.college} · ${d.contest.name}` : `${d.contest.name} · ${d.college}`;
   studentsPage = 1;
@@ -404,17 +405,73 @@ function renderStudents() {
   if (all.length > STUDENTS_PAGE) { $('st-prev').addEventListener('click', () => { if (studentsPage > 1) { studentsPage--; renderStudents(); } }); $('st-next').addEventListener('click', () => { if (studentsPage < pages) { studentsPage++; renderStudents(); } }); }
 }
 
-// Student Add Modal handlers
-function populateAddStudentDatalists() {
-  const uniq = (key) => Array.from(new Set(roster.map((s) => s[key]).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
-  const setOpts = (id, arr) => {
-    const dl = $(id);
-    if (dl) dl.innerHTML = arr.map((v) => `<option value="${esc(v)}"></option>`).join('');
+// Student Add & Edit Modal Dropdown Helpers
+function getActiveFacets() {
+  const uniq = (key, facetArr) => {
+    const list = [...(facetArr || []), ...roster.map((s) => s[key]).filter(Boolean)];
+    return Array.from(new Set(list)).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
   };
-  setOpts('add-st-campus-list', uniq('campus'));
-  setOpts('add-st-dept-list', uniq('department'));
-  setOpts('add-st-sec-list', uniq('section'));
-  setOpts('add-st-year-list', uniq('year'));
+  return {
+    campuses: uniq('campus', collegeFacets?.campuses),
+    departments: uniq('department', collegeFacets?.departments),
+    sections: uniq('section', collegeFacets?.sections),
+    years: uniq('year', collegeFacets?.years),
+  };
+}
+
+function getSectionsForDept(dept) {
+  const facets = getActiveFacets();
+  if (!dept) return facets.sections;
+  const deptStudents = roster.filter((s) => s.department && s.department.toLowerCase() === dept.toLowerCase());
+  const deptSecs = Array.from(new Set(deptStudents.map((s) => s.section).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const otherSecs = facets.sections.filter((s) => !deptSecs.includes(s));
+  return [...deptSecs, ...otherSecs];
+}
+
+function setupFacetDropdown(selectId, optionsList, label, selectedValue = '') {
+  const el = $(selectId);
+  if (!el) return;
+  const newBox = $(selectId + '-new');
+  let html = `<option value="">— ${label} —</option>`;
+  html += (optionsList || []).map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  html += `<option value="__new__">＋ New ${label}…</option>`;
+  el.innerHTML = html;
+
+  if (selectedValue && (optionsList || []).includes(selectedValue)) {
+    el.value = selectedValue;
+    if (newBox) { newBox.classList.add('hidden'); newBox.value = ''; }
+  } else if (selectedValue) {
+    el.value = '__new__';
+    if (newBox) { newBox.classList.remove('hidden'); newBox.value = selectedValue; }
+  } else {
+    el.value = '';
+    if (newBox) { newBox.classList.add('hidden'); newBox.value = ''; }
+  }
+}
+
+function bindFacetToggle(selectId) {
+  const el = $(selectId);
+  const newBox = $(selectId + '-new');
+  if (el && newBox) {
+    el.onchange = () => {
+      if (el.value === '__new__') {
+        newBox.classList.remove('hidden');
+        newBox.focus();
+      } else {
+        newBox.classList.add('hidden');
+        newBox.value = '';
+      }
+    };
+  }
+}
+
+function getFacetValue(selectId) {
+  const el = $(selectId);
+  if (!el) return '';
+  if (el.value === '__new__') {
+    return $(selectId + '-new')?.value.trim() || '';
+  }
+  return el.value.trim();
 }
 
 function setAddStudentMode(mode) {
@@ -431,10 +488,6 @@ function openAddStudentModal() {
   $('add-st-username').value = '';
   $('add-st-reg').value = '';
   $('add-st-email').value = '';
-  $('add-st-campus').value = $('f-campus')?.value || '';
-  $('add-st-dept').value = $('f-department')?.value || '';
-  $('add-st-sec').value = $('f-section')?.value || '';
-  $('add-st-year').value = $('f-year')?.value || '';
   $('add-st-bulk-text').value = '';
   $('add-st-bulk-count').textContent = '';
 
@@ -442,9 +495,48 @@ function openAddStudentModal() {
   if (stat) { stat.textContent = ''; stat.className = 'status'; }
 
   setAddStudentMode('single');
-  populateAddStudentDatalists();
+
+  const facets = getActiveFacets();
+  const defCampus = $('f-campus')?.value || '';
+  const defDept = $('f-department')?.value || '';
+  const defSec = $('f-section')?.value || '';
+  const defYear = $('f-year')?.value || '';
+
+  setupFacetDropdown('add-st-campus', facets.campuses, 'Campus', defCampus);
+  setupFacetDropdown('add-st-dept', facets.departments, 'Department', defDept);
+  setupFacetDropdown('add-st-sec', getSectionsForDept(defDept), 'Section', defSec);
+  setupFacetDropdown('add-st-year', facets.years, 'Year', defYear);
+
+  ['add-st-campus', 'add-st-sec', 'add-st-year'].forEach(bindFacetToggle);
+
   $('add-student-modal')?.classList.remove('hidden');
 }
+
+$('add-st-dept')?.addEventListener('change', () => {
+  if ($('add-st-dept').value === '__new__') {
+    $('add-st-dept-new')?.classList.remove('hidden');
+    $('add-st-dept-new')?.focus();
+  } else {
+    $('add-st-dept-new')?.classList.add('hidden');
+    if ($('add-st-dept-new')) $('add-st-dept-new').value = '';
+  }
+  const curSec = getFacetValue('add-st-sec');
+  const dept = getFacetValue('add-st-dept');
+  setupFacetDropdown('add-st-sec', getSectionsForDept(dept), 'Section', curSec);
+});
+
+$('edit-st-dept')?.addEventListener('change', () => {
+  if ($('edit-st-dept').value === '__new__') {
+    $('edit-st-dept-new')?.classList.remove('hidden');
+    $('edit-st-dept-new')?.focus();
+  } else {
+    $('edit-st-dept-new')?.classList.add('hidden');
+    if ($('edit-st-dept-new')) $('edit-st-dept-new').value = '';
+  }
+  const curSec = getFacetValue('edit-st-sec');
+  const dept = getFacetValue('edit-st-dept');
+  setupFacetDropdown('edit-st-sec', getSectionsForDept(dept), 'Section', curSec);
+});
 
 $('add-student-btn')?.addEventListener('click', () => openAddStudentModal());
 $('add-st-tab-single')?.addEventListener('click', () => setAddStudentMode('single'));
@@ -497,10 +589,10 @@ $('add-st-save')?.addEventListener('click', async () => {
     const hrUsername = $('add-st-username').value.trim();
     const registerNo = $('add-st-reg').value.trim();
     const email = $('add-st-email').value.trim();
-    const campus = $('add-st-campus').value.trim();
-    const department = $('add-st-dept').value.trim();
-    const section = $('add-st-sec').value.trim();
-    const year = $('add-st-year').value.trim();
+    const campus = getFacetValue('add-st-campus');
+    const department = getFacetValue('add-st-dept');
+    const section = getFacetValue('add-st-sec');
+    const year = getFacetValue('add-st-year');
 
     if (!name && !hrUsername) {
       if (stat) { stat.textContent = 'Please provide a student name or HackerRank username.'; stat.className = 'status err'; }
@@ -586,10 +678,14 @@ function openEditStudent(id) {
   $('edit-st-username').value = s.hrUsername || '';
   $('edit-st-reg').value = s.registerNo || '';
   $('edit-st-email').value = s.email || '';
-  $('edit-st-campus').value = s.campus || '';
-  $('edit-st-dept').value = s.department || '';
-  $('edit-st-sec').value = s.section || '';
-  $('edit-st-year').value = s.year || '';
+
+  const facets = getActiveFacets();
+  setupFacetDropdown('edit-st-campus', facets.campuses, 'Campus', s.campus || '');
+  setupFacetDropdown('edit-st-dept', facets.departments, 'Department', s.department || '');
+  setupFacetDropdown('edit-st-sec', getSectionsForDept(s.department), 'Section', s.section || '');
+  setupFacetDropdown('edit-st-year', facets.years, 'Year', s.year || '');
+
+  ['edit-st-campus', 'edit-st-sec', 'edit-st-year'].forEach(bindFacetToggle);
 
   const stat = $('edit-st-status');
   if (stat) { stat.textContent = ''; stat.className = 'status'; }
@@ -608,10 +704,10 @@ $('edit-st-save')?.addEventListener('click', async () => {
   const hrUsername = $('edit-st-username').value.trim();
   const registerNo = $('edit-st-reg').value.trim();
   const email = $('edit-st-email').value.trim();
-  const campus = $('edit-st-campus').value.trim();
-  const department = $('edit-st-dept').value.trim();
-  const section = $('edit-st-sec').value.trim();
-  const year = $('edit-st-year').value.trim();
+  const campus = getFacetValue('edit-st-campus');
+  const department = getFacetValue('edit-st-dept');
+  const section = getFacetValue('edit-st-sec');
+  const year = getFacetValue('edit-st-year');
 
   const stat = $('edit-st-status');
   if (!name && !hrUsername) {
@@ -641,10 +737,17 @@ $('edit-st-save')?.addEventListener('click', async () => {
       roster[idx] = { ...roster[idx], ...updated };
     }
 
+    fillFilters();
+    renderSummary();
+    renderTopicAnalysis();
+    renderCompletion();
+    renderCategoryChart();
+    renderStudents();
+    renderDaily();
+
     if (stat) { stat.textContent = 'Saved successfully!'; stat.className = 'status ok'; }
     setTimeout(() => {
       $('edit-student-modal')?.classList.add('hidden');
-      renderStudents();
     }, 400);
   } catch (e) {
     if (stat) { stat.textContent = e.message || 'Failed to save student.'; stat.className = 'status err'; }
