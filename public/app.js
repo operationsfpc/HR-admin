@@ -998,7 +998,7 @@ function renderCategoryChart() {
   const card = $('category-card');
   if (!dashData) { card.classList.add('hidden'); return; }
   const byUser = new Map(dashData.users.map((u) => [u.username.toLowerCase(), u]));
-  const participants = roster.map((s) => byUser.get(s.hrUsername.toLowerCase())).filter(Boolean);
+  const participants = roster.map((s) => byUser.get((s.hrUsername || '').toLowerCase())).filter(Boolean);
   const catQs = new Map();
   for (const q of dashData.questions) { const c = dashCats[q.name]; if (!c) continue; if (!catQs.has(c)) catQs.set(c, []); catQs.get(c).push(q.name); }
   if (!participants.length || !catQs.size) { card.classList.add('hidden'); return; }
@@ -1054,7 +1054,7 @@ function openTopicCat(topic, cat) {
   const byUser = new Map(dashData.users.map((u) => [u.username.toLowerCase(), u]));
   const rows = [];
   for (const s of roster) {
-    const u = byUser.get(s.hrUsername.toLowerCase()); if (!u) continue;
+    const u = byUser.get((s.hrUsername || '').toLowerCase()); if (!u) continue;
     const solved = qs.filter((qn) => u.questionStatus[qn]?.solved).length;
     rows.push({ name: s.name || s.hrUsername, hrUsername: s.hrUsername, department: s.department, section: s.section, solved, total: qs.length, completed: solved === qs.length });
   }
@@ -1203,7 +1203,7 @@ function renderTopicAnalysis() {
   const card = $('topic-analysis-card');
   if (!dashData) { card.classList.add('hidden'); return; }
   const byUser = new Map(dashData.users.map((u) => [u.username.toLowerCase(), u]));
-  const participants = roster.map((s) => byUser.get(s.hrUsername.toLowerCase())).filter(Boolean);
+  const participants = roster.map((s) => byUser.get((s.hrUsername || '').toLowerCase())).filter(Boolean);
   if (!participants.length) { card.classList.add('hidden'); return; }
 
   const topicQs = new Map();
@@ -1243,15 +1243,17 @@ function renderSummary() {
   const sm = $('summary');
   if (!dashData) { sm.classList.add('hidden'); return; }
   sm.classList.remove('hidden');
-  const inContest = roster.filter((s) => dashData.users.some((u) => u.username.toLowerCase() === s.hrUsername.toLowerCase())).length;
+  const userKeys = new Set((dashData.users || []).map((u) => u.username.toLowerCase()));
+  const inContest = roster.filter((s) => s.hrUsername && userKeys.has(String(s.hrUsername).trim().toLowerCase())).length;
   sm.innerHTML = [['Students', roster.length], ['In course', inContest], ['Questions', dashData.summary.totalQuestions], ['Avg solved', dashData.summary.avgSolved], ['Completion', dashData.summary.overallCompletion + '%']]
     .map(([l, v]) => `<div class="stat"><div class="value">${v}</div><div class="label">${l}</div></div>`).join('');
 }
 function joinedRows() {
   const byUser = new Map((dashData?.users || []).map((u) => [u.username.toLowerCase(), u]));
   return roster.map((s) => {
-    const hasHrId = !!(s.hrUsername && String(s.hrUsername).trim());
-    const u = hasHrId ? byUser.get(s.hrUsername.toLowerCase()) : null;
+    const rawHr = String(s.hrUsername || '').trim();
+    const hasHrId = !!rawHr;
+    const u = hasHrId ? byUser.get(rawHr.toLowerCase()) : null;
     const totalQ = dashData?.summary.totalQuestions || 0;
     return { ...s, hasHrId, inContest: !!u, solved: u ? u.solved : 0, score: u ? u.computedScore : 0, totalQ, completion: u && totalQ ? Math.round((u.solved / totalQ) * 100) : 0 };
   });

@@ -177,7 +177,7 @@ $('view-sync-all-btn')?.addEventListener('click', () => syncReadDashboard(true))
 
 function joinedRows() {
   const byUser = new Map((dashData?.users || []).map((u) => [u.username.toLowerCase(), u]));
-  return roster.map((s) => { const hasHrId = !!(s.hrUsername && String(s.hrUsername).trim()); const u = hasHrId ? byUser.get(s.hrUsername.toLowerCase()) : null; const totalQ = dashData?.summary.totalQuestions || 0;
+  return roster.map((s) => { const rawHr = String(s.hrUsername || '').trim(); const hasHrId = !!rawHr; const u = hasHrId ? byUser.get(rawHr.toLowerCase()) : null; const totalQ = dashData?.summary.totalQuestions || 0;
     return { ...s, hasHrId, inContest: !!u, solved: u ? u.solved : 0, score: u ? u.computedScore : 0, totalQ, completion: u && totalQ ? Math.round((u.solved / totalQ) * 100) : 0 }; });
 }
 function fillFilters() {
@@ -196,7 +196,8 @@ function filteredRows() {
 }
 function renderSummary() {
   const sm = $('summary'); sm.classList.remove('hidden');
-  const inContest = roster.filter((s) => dashData.users.some((u) => u.username.toLowerCase() === s.hrUsername.toLowerCase())).length;
+  const userKeys = new Set((dashData.users || []).map((u) => u.username.toLowerCase()));
+  const inContest = roster.filter((s) => s.hrUsername && userKeys.has(String(s.hrUsername).trim().toLowerCase())).length;
   sm.innerHTML = [['Students', roster.length], ['In course', inContest], ['Questions', dashData.summary.totalQuestions], ['Avg solved', dashData.summary.avgSolved], ['Completion', dashData.summary.overallCompletion + '%']]
     .map(([l, v]) => `<div class="stat"><div class="value">${v}</div><div class="label">${l}</div></div>`).join('');
 }
@@ -218,7 +219,7 @@ function topicChartSVG(rows) {
 function renderTopicAnalysis() {
   const card = $('topic-analysis-card');
   const byUser = new Map(dashData.users.map((u) => [u.username.toLowerCase(), u]));
-  const participants = roster.map((s) => byUser.get(s.hrUsername.toLowerCase())).filter(Boolean);
+  const participants = roster.map((s) => byUser.get((s.hrUsername || '').toLowerCase())).filter(Boolean);
   if (!participants.length) { card.classList.add('hidden'); return; }
   const topicQs = new Map();
   for (const q of dashData.questions) { const t = dashTopics[q.name] || splitTitle(q.name).tag || 'Other'; if (!topicQs.has(t)) topicQs.set(t, []); topicQs.get(t).push(q.name); }
@@ -248,7 +249,7 @@ function renderCategoryChart() {
   const card = $('category-card');
   if (!dashData) { card.classList.add('hidden'); return; }
   const byUser = new Map(dashData.users.map((u) => [u.username.toLowerCase(), u]));
-  const participants = roster.map((s) => byUser.get(s.hrUsername.toLowerCase())).filter(Boolean);
+  const participants = roster.map((s) => byUser.get((s.hrUsername || '').toLowerCase())).filter(Boolean);
   const catQs = new Map();
   for (const q of dashData.questions) { const c = dashCats[q.name]; if (!c) continue; if (!catQs.has(c)) catQs.set(c, []); catQs.get(c).push(q.name); }
   if (!participants.length || !catQs.size) { card.classList.add('hidden'); return; }
@@ -293,7 +294,7 @@ function openTopicCat(topic, cat) {
   const entry = tcCellMap[topic] && tcCellMap[topic][cat]; if (!entry) return;
   const qs = entry.qs; const byUser = new Map(dashData.users.map((u) => [u.username.toLowerCase(), u]));
   const rows = [];
-  for (const s of roster) { const u = byUser.get(s.hrUsername.toLowerCase()); if (!u) continue; const solved = qs.filter((qn) => u.questionStatus[qn]?.solved).length; rows.push({ name: s.name || s.hrUsername, hrUsername: s.hrUsername, department: s.department, section: s.section, solved, total: qs.length, completed: solved === qs.length }); }
+  for (const s of roster) { const u = byUser.get((s.hrUsername || '').toLowerCase()); if (!u) continue; const solved = qs.filter((qn) => u.questionStatus[qn]?.solved).length; rows.push({ name: s.name || s.hrUsername, hrUsername: s.hrUsername, department: s.department, section: s.section, solved, total: qs.length, completed: solved === qs.length }); }
   const done = rows.filter((r) => r.completed).length;
   tcRows = rows.sort((a, b) => (b.completed - a.completed) || (b.solved - a.solved)); tcFilter = 'all'; tcPage = 1;
   $('tc-modal-title').textContent = `${topic} · ${CAT_LABELS[cat] || cat} — ${done}/${rows.length} completed (${qs.length} question${qs.length > 1 ? 's' : ''})`;
@@ -394,13 +395,102 @@ function renderStudents() {
   if (studentsPage > pages) studentsPage = pages;
   const start = (studentsPage - 1) * STUDENTS_PAGE, rows = all.slice(start, start + STUDENTS_PAGE);
   $('students-table').innerHTML =
-    `<thead><tr><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th></tr></thead><tbody>` +
-    (rows.length ? rows.map((r, idx) => `<tr><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td></tr>`).join('') : `<tr><td colspan="8" class="muted">No students.</td></tr>`) + `</tbody>`;
+    `<thead><tr><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th><th style="width:48px;text-align:center">Edit</th></tr></thead><tbody>` +
+    (rows.length ? rows.map((r, idx) =>
+      `<tr><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td><td style="text-align:center"><button class="ghost sm edit-student-btn" data-edit-student="${r.id}" title="Check & Update student details" style="padding:2px 7px;font-size:.85rem;cursor:pointer">✏️</button></td></tr>`).join('')
+      : `<tr><td colspan="9" class="muted">No students.</td></tr>`) + `</tbody>`;
   const from = all.length ? start + 1 : 0;
   $('students-pager').innerHTML = all.length > STUDENTS_PAGE ? `<button class="ghost sm" id="st-prev" ${studentsPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + STUDENTS_PAGE, all.length)} of ${all.length} · page ${studentsPage}/${pages}</span><button class="ghost sm" id="st-next" ${studentsPage >= pages ? 'disabled' : ''}>Next ›</button>` : '';
   if (all.length > STUDENTS_PAGE) { $('st-prev').addEventListener('click', () => { if (studentsPage > 1) { studentsPage--; renderStudents(); } }); $('st-next').addEventListener('click', () => { if (studentsPage < pages) { studentsPage++; renderStudents(); } }); }
 }
-$('students-table').addEventListener('click', (e) => { const l = e.target.closest('.user-link[data-user]'); if (l) { e.preventDefault(); openPerf(l.dataset.user); } });
+
+// Student Edit Modal handlers (read-only / shared view)
+function openEditStudent(id) {
+  const s = roster.find((x) => String(x.id) === String(id));
+  if (!s) return;
+  $('edit-st-id').value = s.id;
+  $('edit-st-name').value = s.name || '';
+  $('edit-st-username').value = s.hrUsername || '';
+  $('edit-st-reg').value = s.registerNo || '';
+  $('edit-st-email').value = s.email || '';
+  $('edit-st-campus').value = s.campus || '';
+  $('edit-st-dept').value = s.department || '';
+  $('edit-st-sec').value = s.section || '';
+  $('edit-st-year').value = s.year || '';
+
+  const stat = $('edit-st-status');
+  if (stat) { stat.textContent = ''; stat.className = 'status'; }
+  $('edit-student-modal')?.classList.remove('hidden');
+}
+
+$('edit-st-close')?.addEventListener('click', () => $('edit-student-modal')?.classList.add('hidden'));
+$('edit-st-cancel')?.addEventListener('click', () => $('edit-student-modal')?.classList.add('hidden'));
+$('edit-student-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'edit-student-modal') $('edit-student-modal').classList.add('hidden');
+});
+
+$('edit-st-save')?.addEventListener('click', async () => {
+  const id = $('edit-st-id').value;
+  const name = $('edit-st-name').value.trim();
+  const hrUsername = $('edit-st-username').value.trim();
+  const registerNo = $('edit-st-reg').value.trim();
+  const email = $('edit-st-email').value.trim();
+  const campus = $('edit-st-campus').value.trim();
+  const department = $('edit-st-dept').value.trim();
+  const section = $('edit-st-sec').value.trim();
+  const year = $('edit-st-year').value.trim();
+
+  const stat = $('edit-st-status');
+  if (!name && !hrUsername) {
+    if (stat) { stat.textContent = 'Please provide a student name or HackerRank username.'; stat.className = 'status err'; }
+    return;
+  }
+
+  if (stat) { stat.textContent = 'Saving changes…'; stat.className = 'status info'; }
+
+  const url = isCollege
+    ? `/api/college/${token}/students/${id}`
+    : `/api/shared/${token}/students/${id}`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, hrUsername, registerNo, email, campus, department, section, year })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Failed to save student.');
+
+    const updated = d.student || { id: Number(id), name, hrUsername, registerNo, email, campus, department, section, year };
+
+    const idx = roster.findIndex((x) => String(x.id) === String(id));
+    if (idx !== -1) {
+      roster[idx] = { ...roster[idx], ...updated };
+    }
+
+    if (stat) { stat.textContent = 'Saved successfully!'; stat.className = 'status ok'; }
+    setTimeout(() => {
+      $('edit-student-modal')?.classList.add('hidden');
+      renderStudents();
+    }, 400);
+  } catch (e) {
+    if (stat) { stat.textContent = e.message || 'Failed to save student.'; stat.className = 'status err'; }
+  }
+});
+
+$('students-table').addEventListener('click', (e) => {
+  const editBtn = e.target.closest('[data-edit-student]');
+  if (editBtn) {
+    e.preventDefault();
+    openEditStudent(editBtn.dataset.editStudent);
+    return;
+  }
+  const l = e.target.closest('.user-link[data-user]');
+  if (l) {
+    e.preventDefault();
+    openPerf(l.dataset.user);
+  }
+});
 
 // ---- Performance modal ----
 $('perf-close').addEventListener('click', () => $('perf-modal').classList.add('hidden'));

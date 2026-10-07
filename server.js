@@ -442,23 +442,25 @@ app.post('/api/hr/connect', requireAdmin, async (req, res) => {
 const SCRAPE_CAP = 3000; // max users compared per scrape
 
 // Resolve which usernames to scrape for a contest: the mapped roster (capped),
-// falling back to the leaderboard usernames if no students are mapped.
+// combined with any active leaderboard participants.
 async function resolveScrapeTargets(contest, leaderboard) {
   const roster = await db.listStudentsForContest(contest.id);
-  let targets = roster.map((s) => String(s.hrUsername || '').trim()).filter(Boolean);
+  const targets = roster.map((s) => String(s.hrUsername || '').trim()).filter(Boolean);
+  const lbUsernames = (leaderboard || []).map((l) => String(l.username || '').trim()).filter(Boolean);
+
   // dedupe case-insensitively, preserve first spelling
   const seen = new Set(); const deduped = [];
-  for (const u of targets) { const k = u.toLowerCase(); if (!seen.has(k)) { seen.add(k); deduped.push(u); } }
-  targets = deduped;
-  let source = 'roster';
-  if (!targets.length) { targets = (leaderboard || []).map((l) => l.username).filter(Boolean); source = 'leaderboard'; }
-  const capped = targets.length > SCRAPE_CAP;
-  return { targets: targets.slice(0, SCRAPE_CAP), source, capped, rosterCount: roster.length };
+  for (const u of [...targets, ...lbUsernames]) { const k = u.toLowerCase(); if (!seen.has(k)) { seen.add(k); deduped.push(u); } }
+  const source = roster.length ? 'roster' : 'leaderboard';
+  const capped = deduped.length > SCRAPE_CAP;
+  return { targets: deduped.slice(0, SCRAPE_CAP), source, capped, rosterCount: roster.length };
 }
 
 function assembleDashboard({ slug, contest, leaderboard, questions, userMap, reference }) {
   const users = leaderboard.map((entry) => {
-    const status = userMap.get(entry.username) || {}; let solved = 0, attempted = 0, score = 0;
+    const key = String(entry.username || '').toLowerCase();
+    const status = userMap.get(key) || userMap.get(entry.username) || {};
+    let solved = 0, attempted = 0, score = 0;
     const questionStatus = {};
     for (const q of questions) {
       const cell = status[q.name];
@@ -844,6 +846,17 @@ app.get('/api/shared/:token/sync-stream', async (req, res) => {
   } catch (e) { send('failed', { error: e.message }); res.end(); }
 });
 
+app.put('/api/shared/:token/students/:id', async (req, res) => {
+  try {
+    const contest = await db.getContestByShareToken(req.params.token);
+    if (!contest) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
+    const cur = await db.getStudent(req.params.id);
+    if (!cur || cur.college !== contest.college) return res.status(403).json({ error: 'Student not found in this course.' });
+    const updated = await db.updateStudent(req.params.id, { ...req.body, college: contest.college });
+    res.json({ ok: true, student: updated });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ---------------- College-wide share link ----------------
 // Token stored both ways in app_settings for O(1) lookup, no schema change.
 async function collegeIdForToken(token) { return token ? await db.getSetting('college_token:' + token) : null; }
@@ -935,6 +948,19 @@ app.get('/api/college/:token/sync-stream', async (req, res) => {
     if (!aborted) send('done', { ok, total: contests.length, failures, college: college.name });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
+});
+
+app.put('/api/college/:token/students/:id', async (req, res) => {
+  try {
+    const id = await collegeIdForToken(req.params.token);
+    if (!id) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
+    const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
+    if (!college) return res.status(404).json({ error: 'College not found.' });
+    const cur = await db.getStudent(req.params.id);
+    if (!cur || cur.college !== college.name) return res.status(403).json({ error: 'Student not found in this college.' });
+    const updated = await db.updateStudent(req.params.id, { ...req.body, college: college.name });
+    res.json({ ok: true, student: updated });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.get(['/view/:token', '/view/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));
 app.get(['/college/:token', '/college/:token/'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'view.html')));

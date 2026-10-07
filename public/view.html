@@ -156,6 +156,56 @@
     </div>
   </div>
 
+  <!-- Edit Student Modal -->
+  <div id="edit-student-modal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="card-head" style="margin-bottom:8px">
+        <h3 style="margin:0">✏️ Check & Update Student Data</h3>
+        <button id="edit-st-close" class="ghost sm" title="Close">✕</button>
+      </div>
+      <input type="hidden" id="edit-st-id" />
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">Name:
+          <input id="edit-st-name" placeholder="Student name" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">HackerRank Username:
+          <input id="edit-st-username" placeholder="HackerRank username" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">Register No:
+          <input id="edit-st-reg" placeholder="Register number" style="flex:1" />
+        </label>
+        <label class="inline-label" style="flex:1">Email:
+          <input id="edit-st-email" type="email" placeholder="Email" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">Campus:
+          <input id="edit-st-campus" placeholder="Campus" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label class="inline-label" style="flex:1">Dept:
+          <input id="edit-st-dept" placeholder="Department" style="flex:1" />
+        </label>
+        <label class="inline-label" style="flex:1">Section:
+          <input id="edit-st-sec" placeholder="Section" style="flex:1" />
+        </label>
+        <label class="inline-label" style="flex:1">Year:
+          <input id="edit-st-year" placeholder="Year" style="flex:1" />
+        </label>
+      </div>
+      <div class="form-row" style="margin-top:14px;justify-content:flex-end;gap:8px">
+        <button id="edit-st-cancel" class="ghost">Cancel</button>
+        <button id="edit-st-save" class="primary">Save Changes</button>
+      </div>
+      <div id="edit-st-status" class="status" style="margin-top:8px"></div>
+    </div>
+  </div>
+
   <script src="/theme.js?v=5"></script>
   <script src="/view.js?v=5"></script>
 </body>
