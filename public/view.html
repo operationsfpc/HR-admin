@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Course Dashboard</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
   <link rel="stylesheet" href="/styles.css?v=5" />
 </head>
+
 <body>
   <header class="topbar">
     <div class="brand">⚡ HackerRank Dashboard</div>
@@ -18,9 +21,11 @@
   <main class="container">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 6px">
       <h2 id="view-title" style="margin:0"></h2>
-      <label id="view-contest-wrap" class="inline-label hidden" style="margin:0">Course: <select id="view-contest"></select></label>
+      <label id="view-contest-wrap" class="inline-label hidden" style="margin:0">Course: <select
+          id="view-contest"></select></label>
       <button id="view-sync-btn" class="sm" title="Sync latest data from HackerRank">⟳ Sync now</button>
-      <button id="view-sync-all-btn" class="ghost sm hidden" title="Sync all courses for this college">⟳ Sync all courses</button>
+      <button id="view-sync-all-btn" class="ghost sm hidden" title="Sync all courses for this college">⟳ Sync all
+        courses</button>
     </div>
     <div id="view-progress" class="progress hidden" style="margin-bottom:8px">
       <div class="lab" id="view-prog-lab"></div>
@@ -35,98 +40,165 @@
     </nav>
 
     <div id="tab-dashboard">
-    <div id="summary" class="summary-grid hidden"></div>
+      <div id="summary" class="summary-grid hidden"></div>
 
-    <div id="topic-analysis-card" class="card hidden">
-      <div class="card-head"><h3>Topic-wise analysis <span class="muted" id="ta-note"></span></h3><button id="ta-chart-btn" class="ghost sm">📊 Enlarge chart</button></div>
-      <div class="ta-grid">
-        <div id="ta-chart"></div>
-        <div class="table-scroll"><table id="topic-analysis-table" class="data-table"></table></div>
-      </div>
-    </div>
-
-    <div class="cb-grid">
-      <div id="completion-card" class="card hidden">
+      <div id="topic-analysis-card" class="card hidden">
         <div class="card-head">
-          <h3>Completion breakdown <span class="muted" id="cb-note"></span></h3>
-          <label class="inline-label">Band size:
-            <select id="cb-band-size"><option>10</option><option>15</option><option>20</option><option>25</option><option>30</option></select>
-          </label>
+          <h3>Topic-wise analysis <span class="muted" id="ta-note"></span></h3><button id="ta-chart-btn"
+            class="ghost sm">📊 Enlarge chart</button>
         </div>
-        <p class="muted">Students grouped by how many questions they've solved. Click a bar to see who's in it.</p>
-        <div id="completion-chart" style="flex:1;display:flex;align-items:center;justify-content:center"></div>
-        <div id="completion-pager" class="pager"></div>
+        <div class="ta-grid">
+          <div id="ta-chart"></div>
+          <div class="table-scroll">
+            <table id="topic-analysis-table" class="data-table"></table>
+          </div>
+        </div>
       </div>
-      <div id="category-card" class="card hidden">
-        <h3>Question categories <span class="muted" id="cat-note"></span></h3>
-        <p class="muted">Solve rate per category across participants.</p>
-        <div id="cat-chart"></div>
-        <div class="table-scroll"><table id="cat-table" class="data-table"></table></div>
-        <h4 style="margin:16px 0 6px">Topic × category completion</h4>
-        <div class="table-scroll" style="max-height:320px;overflow:auto"><table id="cat-topic-table" class="data-table"></table></div>
-      </div>
-    </div>
 
-    <div class="card">
-      <div class="card-head">
-        <div style="display:flex;align-items:center;gap:10px">
-          <h3 style="margin:0">Students</h3>
-          <button id="add-student-btn" class="primary sm" title="Add a new student" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
-            <span style="font-size:1.05rem;line-height:1;margin-top:-1px">＋</span> Add Student
-          </button>
+      <div class="cb-grid">
+        <div id="completion-card" class="card hidden">
+          <div class="card-head">
+            <h3>Completion breakdown <span class="muted" id="cb-note"></span></h3>
+            <label class="inline-label">Band size:
+              <select id="cb-band-size">
+                <option>10</option>
+                <option>15</option>
+                <option>20</option>
+                <option>25</option>
+                <option>30</option>
+              </select>
+            </label>
+          </div>
+          <p class="muted">Students grouped by how many questions they've solved. Click a bar to see who's in it.</p>
+          <div id="completion-chart" style="flex:1;display:flex;align-items:center;justify-content:center"></div>
+          <div id="completion-pager" class="pager"></div>
         </div>
-        <div class="form-row" style="margin:0">
-          <select id="f-campus"><option value="">All campuses</option></select>
-          <select id="f-department"><option value="">All departments</option></select>
-          <select id="f-section"><option value="">All sections</option></select>
-          <select id="f-year"><option value="">All years</option></select>
-          <input id="f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
+        <div id="category-card" class="card hidden">
+          <h3>Question categories <span class="muted" id="cat-note"></span></h3>
+          <p class="muted">Solve rate per category across participants.</p>
+          <div id="cat-chart"></div>
+          <div class="table-scroll">
+            <table id="cat-table" class="data-table"></table>
+          </div>
+          <h4 style="margin:16px 0 6px">Topic × category completion</h4>
+          <div class="table-scroll" style="max-height:320px;overflow:auto">
+            <table id="cat-topic-table" class="data-table"></table>
+          </div>
         </div>
       </div>
-      <div class="table-scroll"><table id="students-table" class="data-table"></table></div>
-      <div id="students-pager" class="pager"></div>
-    </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div style="display:flex;align-items:center;gap:10px">
+            <h3 style="margin:0">Students</h3>
+            <button id="add-student-btn" class="primary sm" title="Add a new student"
+              style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+              <span style="font-size:1.05rem;line-height:1;margin-top:-1px">＋</span> Add Student
+            </button>
+          </div>
+          <div class="form-row" style="margin:0">
+            <select id="f-campus">
+              <option value="">All campuses</option>
+            </select>
+            <select id="f-department">
+              <option value="">All departments</option>
+            </select>
+            <select id="f-section">
+              <option value="">All sections</option>
+            </select>
+            <select id="f-year">
+              <option value="">All years</option>
+            </select>
+            <input id="f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table id="students-table" class="data-table"></table>
+        </div>
+        <div id="students-pager" class="pager"></div>
+      </div>
     </div><!-- /tab-dashboard -->
 
     <div id="tab-daily" class="hidden">
       <div class="card">
-        <div class="card-head"><h3>Daily questions completed <span class="muted" id="daily-note"></span></h3></div>
-        <p class="muted">Questions each student completed per day over the <b>last 10 days</b>, ending today. Days with no sync show a dot (no change recorded). Click any day's count to see who completed questions.</p>
+        <div class="card-head">
+          <h3>Daily questions completed <span class="muted" id="daily-note"></span></h3>
+        </div>
+        <p class="muted">Questions each student completed per day over the <b>last 10 days</b>, ending today. Days with
+          no sync show a dot (no change recorded). Click any day's count to see who completed questions.</p>
         <div class="form-row" style="margin:0 0 8px">
-          <select id="daily-f-campus"><option value="">All campuses</option></select>
-          <select id="daily-f-department"><option value="">All departments</option></select>
-          <select id="daily-f-section"><option value="">All sections</option></select>
-          <select id="daily-f-year"><option value="">All years</option></select>
+          <select id="daily-f-campus">
+            <option value="">All campuses</option>
+          </select>
+          <select id="daily-f-department">
+            <option value="">All departments</option>
+          </select>
+          <select id="daily-f-section">
+            <option value="">All sections</option>
+          </select>
+          <select id="daily-f-year">
+            <option value="">All years</option>
+          </select>
           <input id="daily-f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
         </div>
-        <div class="table-scroll"><table id="daily-table" class="data-table"></table></div>
+        <div class="table-scroll">
+          <table id="daily-table" class="data-table"></table>
+        </div>
         <div id="daily-table-pager" class="pager"></div>
       </div>
     </div>
 
     <div id="tab-attendance" class="hidden">
       <div class="card">
-        <div class="card-head"><h3>Attendance <span class="muted" id="att-note"></span></h3></div>
+        <div class="card-head">
+          <h3>Attendance <span class="muted" id="att-note"></span></h3>
+        </div>
         <div id="att-sheet-tabs" class="form-row" style="margin:0 0 8px;flex-wrap:wrap;gap:6px"></div>
-        <div class="form-row" style="margin:0 0 8px"><input id="att-search" placeholder="Search…" style="flex:0 0 240px" /><span id="att-count" class="muted"></span></div>
-        <div class="table-scroll" style="max-height:64vh"><table id="att-table" class="data-table"></table></div>
+        <div class="form-row" style="margin:0 0 8px"><input id="att-search" placeholder="Search…"
+            style="flex:0 0 240px" /><span id="att-count" class="muted"></span></div>
+        <div class="table-scroll" style="max-height:64vh">
+          <table id="att-table" class="data-table"></table>
+        </div>
         <div id="att-pager" class="pager"></div>
       </div>
     </div>
   </main>
 
   <!-- Topic chart modal -->
-  <div id="ta-modal" class="modal-overlay hidden"><div class="modal wide"><div class="card-head" style="margin-bottom:6px"><h3>Topic-wise analysis</h3><button id="ta-modal-close" class="ghost sm">✕</button></div><div id="ta-modal-chart"></div></div></div>
+  <div id="ta-modal" class="modal-overlay hidden">
+    <div class="modal wide">
+      <div class="card-head" style="margin-bottom:6px">
+        <h3>Topic-wise analysis</h3><button id="ta-modal-close" class="ghost sm">✕</button>
+      </div>
+      <div id="ta-modal-chart"></div>
+    </div>
+  </div>
 
   <!-- Completion names modal -->
-  <div id="cb-modal" class="modal-overlay hidden"><div class="modal wide"><div class="card-head" style="margin-bottom:6px"><h3 id="cb-modal-title"></h3><button id="cb-modal-close" class="ghost sm">✕</button></div><div class="table-scroll" style="max-height:60vh"><table id="cb-modal-table" class="data-table"></table></div><div id="cb-pager" class="pager"></div></div></div>
+  <div id="cb-modal" class="modal-overlay hidden">
+    <div class="modal wide">
+      <div class="card-head" style="margin-bottom:6px">
+        <h3 id="cb-modal-title"></h3><button id="cb-modal-close" class="ghost sm">✕</button>
+      </div>
+      <div class="table-scroll" style="max-height:60vh">
+        <table id="cb-modal-table" class="data-table"></table>
+      </div>
+      <div id="cb-pager" class="pager"></div>
+    </div>
+  </div>
 
   <!-- Topic × category names modal -->
   <div id="tc-modal" class="modal-overlay hidden">
     <div class="modal wide">
-      <div class="card-head" style="margin-bottom:6px"><h3 id="tc-modal-title"></h3><button id="tc-modal-close" class="ghost sm">✕</button></div>
-      <div class="form-row" style="margin:0 0 8px"><button id="tc-filter-all" class="ghost sm">All</button><button id="tc-filter-done" class="ghost sm">Completed</button><button id="tc-filter-not" class="ghost sm">Not completed</button></div>
-      <div class="table-scroll" style="max-height:56vh"><table id="tc-modal-table" class="data-table"></table></div>
+      <div class="card-head" style="margin-bottom:6px">
+        <h3 id="tc-modal-title"></h3><button id="tc-modal-close" class="ghost sm">✕</button>
+      </div>
+      <div class="form-row" style="margin:0 0 8px"><button id="tc-filter-all" class="ghost sm">All</button><button
+          id="tc-filter-done" class="ghost sm">Completed</button><button id="tc-filter-not" class="ghost sm">Not
+          completed</button></div>
+      <div class="table-scroll" style="max-height:56vh">
+        <table id="tc-modal-table" class="data-table"></table>
+      </div>
       <div id="tc-pager" class="pager"></div>
     </div>
   </div>
@@ -145,7 +217,9 @@
         <input id="daily-modal-search" placeholder="Search student / username / dept / sec…" style="max-width:320px" />
         <span id="daily-modal-count" class="muted"></span>
       </div>
-      <div class="table-scroll" style="max-height:60vh"><table id="daily-modal-table" class="data-table"></table></div>
+      <div class="table-scroll" style="max-height:60vh">
+        <table id="daily-modal-table" class="data-table"></table>
+      </div>
       <div id="daily-pager" class="pager"></div>
     </div>
   </div>
@@ -153,11 +227,15 @@
   <!-- Performance modal -->
   <div id="perf-modal" class="modal-overlay hidden">
     <div class="modal wide">
-      <div class="card-head"><h3 id="perf-title"></h3><button id="perf-close" class="ghost sm" title="Close">✕</button></div>
+      <div class="card-head">
+        <h3 id="perf-title"></h3><button id="perf-close" class="ghost sm" title="Close">✕</button>
+      </div>
       <div id="perf-meta" class="muted"></div>
       <div id="perf-stats"></div>
       <div id="perf-topics"></div>
-      <div class="table-scroll"><table id="perf-table" class="data-table"></table></div>
+      <div class="table-scroll">
+        <table id="perf-table" class="data-table"></table>
+      </div>
     </div>
   </div>
 
@@ -220,8 +298,12 @@
 
       <!-- Bulk Paste Pane -->
       <div id="add-st-bulk-pane" class="hidden">
-        <p class="muted" style="margin:0 0 8px">Paste one student per line. Format: <code>Name, username, reg, email, dept, section, year</code> (commas or tabs). A line with just a username is also fine.</p>
-        <textarea id="add-st-bulk-text" rows="7" style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem" placeholder="Kavin A S, kavin_hr&#10;Kavipriya P, kavipriya22&#10;hema_t"></textarea>
+        <p class="muted" style="margin:0 0 8px">Paste one student per line. Format:
+          <code>Name, username, reg, email, dept, section, year</code> (commas or tabs). A line with just a username is
+          also fine.</p>
+        <textarea id="add-st-bulk-text" rows="7"
+          style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem"
+          placeholder="Kavin A S, kavin_hr&#10;Kavipriya P, kavipriya22&#10;hema_t"></textarea>
         <div id="add-st-bulk-count" class="muted" style="margin-top:4px"></div>
       </div>
 
@@ -289,7 +371,29 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=5"></script>
-  <script src="/view.js?v=5"></script>
+  <!-- Admin Permission Modal -->
+  <div id="admin-auth-modal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:420px">
+      <div class="card-head" style="margin-bottom:8px">
+        <h3 style="margin:0;display:flex;align-items:center;gap:6px"><span>🔒</span> Admin Permission</h3>
+        <button id="admin-auth-close" class="ghost sm" title="Close">✕</button>
+      </div>
+      <p class="muted" style="margin:0 0 14px;font-size:.88rem;line-height:1.4">
+        Enter the admin password to check and update student details.
+      </p>
+      <div class="form-row">
+        <input id="admin-auth-pass" type="password" placeholder="Admin Password" autocomplete="current-password" style="flex:1;width:100%" />
+      </div>
+      <div class="form-row" style="margin-top:14px;justify-content:flex-end;gap:8px">
+        <button id="admin-auth-cancel" class="ghost">Cancel</button>
+        <button id="admin-auth-submit" class="primary">Verify & Continue</button>
+      </div>
+      <div id="admin-auth-status" class="status" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <script src="/theme.js?v=6"></script>
+  <script src="/view.js?v=6"></script>
 </body>
+
 </html>

@@ -101,12 +101,18 @@ const hrSessions = new Map(); // hr login sessions for scraping: token -> {jar,c
 
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
-  if (username === ADMIN_USER && password === ADMIN_PASS) {
+  const user = (username || ADMIN_USER).trim();
+  if (user === ADMIN_USER && password === ADMIN_PASS) {
     const token = generateAdminToken();
     adminTokens.add(token);
     return res.json({ ok: true, token, defaultCreds: ADMIN_USER === 'admin' && ADMIN_PASS === 'admin' });
   }
   res.status(401).json({ error: 'Invalid admin username or password.' });
+});
+app.get('/api/admin/verify', (req, res) => {
+  const t = req.get('x-admin-token') || req.query.adminToken;
+  if (verifyAdminToken(t) || (t && adminTokens.has(t))) return res.json({ ok: true });
+  res.status(401).json({ error: 'Admin authentication required.' });
 });
 function requireAdmin(req, res, next) {
   const t = req.get('x-admin-token') || req.query.adminToken;
@@ -706,7 +712,7 @@ async function computeDaily(contest, N = 10) {
       prev = cur;
       return delta;
     });
-    return { name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, daily, total: prev };
+    return { id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo, email: s.email, daily, total: prev };
   }).sort((a, b) => b.total - a.total);
   return { days, students };
 }
@@ -804,7 +810,7 @@ async function contestSharePayload(contest) {
     contest.slug ? db.getQuestionCategories(contest.slug) : {},
     db.getStudentFacets(contest.college),
   ]);
-  const roster = rosterRaw.map((s) => ({ id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo }));
+  const roster = rosterRaw.map((s) => ({ id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo, email: s.email }));
   const daily = await computeDaily(contest, 10);
   return { college: contest.college, contest: { name: contest.name }, dashboard: dash, topics, roster, topicVideos, categories, daily, facets, tabs: await getSharedTabs() };
 }

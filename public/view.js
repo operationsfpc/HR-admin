@@ -538,7 +538,99 @@ $('edit-st-dept')?.addEventListener('change', () => {
   setupFacetDropdown('edit-st-sec', getSectionsForDept(dept), 'Section', curSec);
 });
 
-$('add-student-btn')?.addEventListener('click', () => openAddStudentModal());
+// ---------------- Admin Auth for Check & Update ----------------
+let adminAuthToken = sessionStorage.getItem('hradmin_token') || localStorage.getItem('hradmin_token') || '';
+let pendingAdminAction = null;
+
+function getAdminToken() {
+  return adminAuthToken || sessionStorage.getItem('hradmin_token') || localStorage.getItem('hradmin_token') || '';
+}
+
+function isAdminAuthenticated() {
+  return !!getAdminToken();
+}
+
+function setAdminStatus(msg, type = 'info') {
+  const el = $('admin-auth-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'status ' + (type === 'ok' ? 'ok' : type === 'err' ? 'err' : 'info');
+}
+
+function requestAdminPermission(action) {
+  if (isAdminAuthenticated()) {
+    action();
+    return;
+  }
+  pendingAdminAction = action;
+  const passEl = $('admin-auth-pass');
+  if (passEl) passEl.value = '';
+  setAdminStatus('', 'info');
+  $('admin-auth-modal')?.classList.remove('hidden');
+  setTimeout(() => passEl?.focus(), 50);
+}
+
+$('admin-auth-close')?.addEventListener('click', () => {
+  $('admin-auth-modal')?.classList.add('hidden');
+  pendingAdminAction = null;
+});
+$('admin-auth-cancel')?.addEventListener('click', () => {
+  $('admin-auth-modal')?.classList.add('hidden');
+  pendingAdminAction = null;
+});
+$('admin-auth-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'admin-auth-modal') {
+    $('admin-auth-modal').classList.add('hidden');
+    pendingAdminAction = null;
+  }
+});
+
+async function verifyAdminAuth() {
+  const pass = $('admin-auth-pass')?.value || '';
+  if (!pass) {
+    setAdminStatus('Please enter the admin password.', 'err');
+    $('admin-auth-pass')?.focus();
+    return;
+  }
+  setAdminStatus('Verifying admin password…', 'info');
+  try {
+    const res = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pass })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Invalid admin password.');
+
+    adminAuthToken = d.token || 'verified';
+    try { sessionStorage.setItem('hradmin_token', adminAuthToken); } catch (e) { /* ignore */ }
+
+    setAdminStatus('Verified successfully!', 'ok');
+    setTimeout(() => {
+      $('admin-auth-modal')?.classList.add('hidden');
+      if ($('admin-auth-pass')) $('admin-auth-pass').value = '';
+      if (typeof pendingAdminAction === 'function') {
+        const act = pendingAdminAction;
+        pendingAdminAction = null;
+        act();
+      }
+    }, 200);
+  } catch (e) {
+    setAdminStatus(e.message || 'Verification failed.', 'err');
+  }
+}
+
+$('admin-auth-submit')?.addEventListener('click', verifyAdminAuth);
+$('admin-auth-pass')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    verifyAdminAuth();
+  }
+});
+
+$('add-student-btn')?.addEventListener('click', () => {
+  requestAdminPermission(() => openAddStudentModal());
+});
 $('add-st-tab-single')?.addEventListener('click', () => setAddStudentMode('single'));
 $('add-st-tab-bulk')?.addEventListener('click', () => setAddStudentMode('bulk'));
 $('add-st-close')?.addEventListener('click', () => $('add-student-modal')?.classList.add('hidden'));
@@ -617,12 +709,22 @@ $('add-st-save')?.addEventListener('click', async () => {
   if (stat) { stat.textContent = 'Adding student…'; stat.className = 'status info'; }
 
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    const t = getAdminToken();
+    if (t) headers['x-admin-token'] = t;
+
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload)
     });
     const d = await res.json();
+    if (res.status === 401) {
+      adminAuthToken = '';
+      sessionStorage.removeItem('hradmin_token');
+      requestAdminPermission(() => $('add-st-save')?.click());
+      return;
+    }
     if (!res.ok) throw new Error(d.error || 'Failed to add student.');
 
     const newStudents = d.students || (d.student ? [d.student] : []);
@@ -633,7 +735,7 @@ $('add-st-save')?.addEventListener('click', async () => {
       } else {
         roster.push(newSt);
       }
-      if (dailyData && dailyData.students) {
+      if (dailyData && Array.isArray(dailyData.students)) {
         const dIdx = dailyData.students.findIndex((x) => String(x.id) === String(newSt.id) || (newSt.hrUsername && x.hrUsername && x.hrUsername.toLowerCase() === newSt.hrUsername.toLowerCase()));
         if (dIdx !== -1) {
           dailyData.students[dIdx] = { ...dailyData.students[dIdx], ...newSt };
@@ -671,9 +773,11 @@ $('add-st-save')?.addEventListener('click', async () => {
 
 // Student Edit Modal handlers (read-only / shared view)
 function openEditStudent(id) {
-  const s = roster.find((x) => String(x.id) === String(id) || (x.hrUsername && String(x.hrUsername) === String(id)));
+  const s = roster.find((x) => String(x.id) === String(id) || (x.hrUsername && String(x.hrUsername).toLowerCase() === String(id).toLowerCase()))
+    || (dailyData?.students || []).find((x) => String(x.id) === String(id) || (x.hrUsername && String(x.hrUsername).toLowerCase() === String(id).toLowerCase()))
+    || joinedRows().find((x) => String(x.id) === String(id) || (x.hrUsername && String(x.hrUsername).toLowerCase() === String(id).toLowerCase()));
   if (!s) return;
-  $('edit-st-id').value = s.id;
+  $('edit-st-id').value = s.id || '';
   $('edit-st-name').value = s.name || '';
   $('edit-st-username').value = s.hrUsername || '';
   $('edit-st-reg').value = s.registerNo || '';
@@ -722,19 +826,36 @@ $('edit-st-save')?.addEventListener('click', async () => {
     : `/api/shared/${token}/students/${id}`;
 
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    const t = getAdminToken();
+    if (t) headers['x-admin-token'] = t;
+
     const res = await fetch(url, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ name, hrUsername, registerNo, email, campus, department, section, year })
     });
     const d = await res.json();
+    if (res.status === 401) {
+      adminAuthToken = '';
+      sessionStorage.removeItem('hradmin_token');
+      requestAdminPermission(() => $('edit-st-save')?.click());
+      return;
+    }
     if (!res.ok) throw new Error(d.error || 'Failed to save student.');
 
     const updated = d.student || { id: Number(id), name, hrUsername, registerNo, email, campus, department, section, year };
 
-    const idx = roster.findIndex((x) => String(x.id) === String(id));
+    const idx = roster.findIndex((x) => String(x.id) === String(id) || (updated.hrUsername && x.hrUsername && x.hrUsername.toLowerCase() === updated.hrUsername.toLowerCase()));
     if (idx !== -1) {
       roster[idx] = { ...roster[idx], ...updated };
+    }
+
+    if (dailyData && Array.isArray(dailyData.students)) {
+      const dIdx = dailyData.students.findIndex((x) => String(x.id) === String(id) || (updated.hrUsername && x.hrUsername && x.hrUsername.toLowerCase() === updated.hrUsername.toLowerCase()));
+      if (dIdx !== -1) {
+        dailyData.students[dIdx] = { ...dailyData.students[dIdx], ...updated };
+      }
     }
 
     fillFilters();
@@ -758,7 +879,8 @@ $('students-table').addEventListener('click', (e) => {
   const editBtn = e.target.closest('[data-edit-student]');
   if (editBtn) {
     e.preventDefault();
-    openEditStudent(editBtn.dataset.editStudent);
+    const stId = editBtn.dataset.editStudent;
+    requestAdminPermission(() => openEditStudent(stId));
     return;
   }
   const l = e.target.closest('.user-link[data-user]');
