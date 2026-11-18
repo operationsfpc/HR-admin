@@ -51,6 +51,16 @@ async function downloadReadOnlyExcel(url, fallbackName, btn = null) {
   }
 }
 
+function syncViewSelectorsVisibility() {
+  const row = $('view-selectors-row');
+  if (!row) return;
+  const anyVisible = ['view-sem-wrap', 'view-contest-wrap', 'view-link-wrap'].some((id) => {
+    const el = $(id);
+    return el && !el.classList.contains('hidden');
+  });
+  row.classList.toggle('hidden', !anyVisible);
+}
+
 function updateViewLinkPicker(links, activeId) {
   currentLinks = Array.isArray(links) ? links : [];
   const wrap = $('view-link-wrap');
@@ -60,6 +70,7 @@ function updateViewLinkPicker(links, activeId) {
     wrap.classList.add('hidden');
     currentLinkId = currentLinks[0] ? String(currentLinks[0].id) : 'primary';
     sel.innerHTML = '';
+    syncViewSelectorsVisibility();
     return;
   }
   wrap.classList.remove('hidden');
@@ -68,6 +79,7 @@ function updateViewLinkPicker(links, activeId) {
     `<option value="all">All links (Combined)</option>`;
   currentLinkId = activeId ? String(activeId) : String(currentLinks[0].id);
   sel.value = currentLinkId;
+  syncViewSelectorsVisibility();
 }
 
 $('view-link')?.addEventListener('change', () => {
@@ -178,6 +190,7 @@ async function boot() {
       }
 
       const sel = $('view-contest'); $('view-contest-wrap').classList.remove('hidden');
+      syncViewSelectorsVisibility();
       const initial = renderViewContestSelect('');
       sel.onchange = () => loadCollegeContest(sel.value, '');
       if (initial.length) await loadCollegeContest(initial[0].id, '');

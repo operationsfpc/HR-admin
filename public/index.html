@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HackerRank Admin Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
-  <link rel="stylesheet" href="/styles.css?v=5" />
+  <link rel="stylesheet" href="/styles.css?v=6" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -45,43 +45,65 @@
       <!-- DASHBOARD -->
       <section id="panel-dashboard" class="panel active">
         <div class="card">
-          <div class="card-head">
-            <h3>Dashboard</h3>
-            <div class="form-row" style="margin:0">
-              <label class="inline-label">College: <select id="dash-college"></select></label>
-              <label class="inline-label">Semester: <select id="dash-semester"><option value="">All semesters</option></select></label>
-              <label class="inline-label">Course: <select id="dash-contest"></select></label>
-              <label id="dash-link-wrap" class="inline-label hidden">Link / Label: <select id="dash-link"></select></label>
-              <button id="contest-add" class="ghost sm">＋ Course</button>
-              <button id="contest-del" class="ghost sm danger">🗑</button>
-              <button id="share-btn" class="ghost sm" title="Share only this course">🔗 Share course</button>
-              <button id="share-college-btn" class="ghost sm" title="Share the whole college (all courses, with a picker)">🔗 Share college</button>
-              <button id="connect-btn" class="ghost sm">Connect HackerRank</button>
+          <div class="toolbar-row">
+            <div class="toolbar-group">
+              <h3 style="margin:0 4px 0 0">Dashboard</h3>
+              <label class="inline-label">College <select id="dash-college"></select></label>
+              <label class="inline-label">Semester <select id="dash-semester"><option value="">All semesters</option></select></label>
+              <label class="inline-label">Course <select id="dash-contest"></select></label>
+              <label id="dash-link-wrap" class="inline-label hidden">Link <select id="dash-link"></select></label>
+            </div>
+            <div class="toolbar-group">
               <button id="sync-btn" class="sm">⟳ Sync now</button>
-              <button id="sync-all-btn" class="sm" title="Scrape every course in every college">⟳⟳ Sync ALL colleges</button>
-              <button id="autosync-btn" class="ghost sm">⟳ Run auto-sync (all)</button>
+              <button id="dash-toggle-add-link" class="ghost sm" title="Attach another labeled HackerRank link to this course">＋ Add Link</button>
+              <button id="contest-add" class="ghost sm" title="Create a new course">＋ Course</button>
+              <button id="share-btn" class="ghost sm" title="Copy read-only share link for this course">🔗 Share course</button>
+              <button id="share-college-btn" class="ghost sm" title="Copy read-only share link for the whole college">🔗 Share college</button>
+              <button id="dash-toggle-settings" class="ghost sm" title="Manage course link URL, shared tabs, and bulk sync">⚙ More</button>
             </div>
           </div>
-          <div class="form-row" style="margin-top:6px;align-items:center">
-            <span class="muted">Shared links show:</span>
-            <label class="inline-label"><input type="checkbox" id="st-dashboard" checked /> Dashboard</label>
-            <label class="inline-label"><input type="checkbox" id="st-daily" checked /> Daily question completion</label>
-            <label class="inline-label"><input type="checkbox" id="st-attendance" checked /> Attendance</label>
-            <span id="st-status" class="muted"></span>
+
+          <div id="dash-links-bar" class="link-chips-bar"></div>
+
+          <!-- Collapsible: Attach another labeled link to current course -->
+          <div id="dash-add-link-box" class="toolbar-box hidden">
+            <div class="toolbar-box-title">Attach another labeled link to this course (old progress is never overwritten)</div>
+            <div class="form-row" style="margin-top:0">
+              <input id="dash-new-link-label" placeholder="Label name (e.g. Sem 2, OOPS, DS)" style="flex:0 1 220px;height:34px;padding:5px 10px" />
+              <input id="dash-new-link-url" placeholder="Paste HackerRank contest URL…" style="flex:1 1 280px;height:34px;padding:5px 10px" />
+              <button id="dash-add-link-btn" class="sm">Attach link</button>
+              <button id="dash-cancel-add-link" class="ghost sm">Cancel</button>
+            </div>
           </div>
-          <div class="muted" id="auto-sync-note" style="margin-top:2px"></div>
-          <div class="form-row">
-            <label class="inline-label" style="flex:1">Course link:
-              <input id="dash-contest-url" placeholder="HackerRank course link for the selected course" style="flex:1" />
-            </label>
-            <button id="dash-savelink" class="ghost sm">Save link</button>
+
+          <!-- Collapsible: Link URL, Shared tab settings, HackerRank connect & bulk sync -->
+          <div id="dash-settings-box" class="toolbar-box hidden">
+            <div class="toolbar-box-title">Course Link & Sync Settings</div>
+            <div class="form-row" style="margin-top:0">
+              <label class="inline-label" style="flex:1">Selected link URL
+                <input id="dash-contest-url" placeholder="HackerRank course link for the selected course" style="flex:1" />
+              </label>
+              <button id="dash-savelink" class="ghost sm">Save link</button>
+              <button id="contest-del" class="ghost sm danger" title="Delete this course">🗑 Delete course</button>
+            </div>
+            <hr class="divider-line" />
+            <div class="toolbar-row">
+              <div class="toolbar-group">
+                <span class="muted">Shared links show:</span>
+                <label class="inline-label"><input type="checkbox" id="st-dashboard" checked /> Dashboard</label>
+                <label class="inline-label"><input type="checkbox" id="st-daily" checked /> Daily</label>
+                <label class="inline-label"><input type="checkbox" id="st-attendance" checked /> Attendance</label>
+                <span id="st-status" class="muted"></span>
+              </div>
+              <div class="toolbar-group">
+                <button id="connect-btn" class="ghost sm">Connect HackerRank</button>
+                <button id="sync-all-btn" class="ghost sm" title="Scrape every active course in every college">⟳⟳ Sync ALL colleges</button>
+                <button id="autosync-btn" class="ghost sm">⟳ Auto-sync (all)</button>
+              </div>
+            </div>
+            <div class="muted" id="auto-sync-note" style="margin-top:8px"></div>
           </div>
-          <div id="dash-links-bar" class="form-row" style="margin-top:6px;flex-wrap:wrap;gap:6px;align-items:center"></div>
-          <div class="form-row" style="margin-top:6px">
-            <input id="dash-new-link-label" placeholder="Add link label (e.g. Sem 2, OOPS, DS)" style="flex:0 0 220px" />
-            <input id="dash-new-link-url" placeholder="Paste another HackerRank contest link to attach to this course…" style="flex:1" />
-            <button id="dash-add-link-btn" class="primary sm" title="Attach an additional labeled HackerRank link to this existing course without overwriting old progress">＋ Add labeled link</button>
-          </div>
+
           <div id="dash-progress" class="progress hidden"><div class="lab" id="dash-prog-lab"></div><div class="bar"><span id="dash-prog-fill" style="width:0%"></span></div></div>
           <div id="dash-status" class="status"></div>
         </div>
@@ -120,17 +142,19 @@
 
         <div class="card">
           <div class="card-head">
-            <h3>Students</h3>
-            <div class="form-row" style="margin:0">
-              <select id="f-campus"><option value="">All campuses</option></select>
-              <select id="f-department"><option value="">All departments</option></select>
-              <select id="f-section"><option value="">All sections</option></select>
-              <select id="f-year"><option value="">All years</option></select>
-              <input id="f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
+            <h3 style="margin:0">Students</h3>
+            <div class="toolbar-group">
               <button id="export-btn" class="ghost sm" title="Download formatted multi-sheet Excel report for this course">⬇ Export Course Excel</button>
-              <button id="export-college-btn" class="ghost sm" title="Download formatted multi-sheet Excel report across all courses in the selected semester (or all semesters)">⬇ Export Semester/College</button>
+              <button id="export-college-btn" class="ghost sm" title="Download formatted multi-sheet Excel report across all courses in the selected semester (or all semesters)">⬇ Export Semester / College</button>
               <button id="del-btn" class="ghost sm danger">🗑 Delete selected</button>
             </div>
+          </div>
+          <div class="filter-bar">
+            <select id="f-campus"><option value="">All campuses</option></select>
+            <select id="f-department"><option value="">All departments</option></select>
+            <select id="f-section"><option value="">All sections</option></select>
+            <select id="f-year"><option value="">All years</option></select>
+            <input id="f-search" placeholder="Search name / username…" />
           </div>
           <div class="table-scroll"><table id="students-table" class="data-table"></table></div>
           <div id="students-pager" class="pager"></div>
@@ -178,43 +202,52 @@
 
         <div class="card">
           <div class="card-head">
-            <h3>Course links for a college</h3>
-            <div class="form-row" style="margin:0">
-              <select id="cc-sem-filter" title="Filter courses by semester"><option value="">All semesters</option></select>
-              <label class="inline-label" style="font-size:.82rem"><input type="checkbox" id="cc-show-archived" checked /> Show archived</label>
-              <input id="cc-search" placeholder="Search course…" style="flex:0 0 180px" />
-              <button id="cc-export-sem" class="ghost sm" title="Export Excel for the selected college & semester filter">📥 Export Excel</button>
+            <h3 style="margin:0">Course links for a college</h3>
+            <div class="toolbar-group">
+              <button id="cc-export-sem" class="ghost sm" title="Export formatted Excel for the selected college & semester filter">⬇ Export Excel</button>
             </div>
           </div>
-          <p class="muted">Add HackerRank course links per <b>semester</b>. Adding a new semester's contest creates a separate course so previous semesters' progress is never overwritten.</p>
-          <div class="form-row">
-            <label class="inline-label" style="flex:1">College: <select id="cc-college" style="flex:1"></select></label>
-            <label class="inline-label">Semester:
-              <select id="cc-sem">
-                <option value="Sem 1">Sem 1</option>
-                <option value="Sem 2">Sem 2</option>
-                <option value="Sem 3">Sem 3</option>
-                <option value="Sem 4">Sem 4</option>
-                <option value="Sem 5">Sem 5</option>
-                <option value="Sem 6">Sem 6</option>
-                <option value="Sem 7">Sem 7</option>
-                <option value="Sem 8">Sem 8</option>
-                <option value="">Unassigned</option>
-                <option value="__custom__">＋ Custom…</option>
-              </select>
-            </label>
-            <input id="cc-sem-custom" class="hidden" placeholder="e.g. 2026-27 Sem 1" style="flex:0 0 165px" />
+          <p class="muted" style="margin:0 0 10px">Add HackerRank course links per <b>semester</b>, or click <b>＋ Link</b> on any existing course below to attach an extra labeled link without overwriting old progress.</p>
+
+          <div class="toolbar-box" style="margin-top:0;margin-bottom:12px">
+            <div class="form-row" style="margin-top:0">
+              <label class="inline-label" style="flex:1">College <select id="cc-college" style="flex:1"></select></label>
+              <label class="inline-label">Semester
+                <select id="cc-sem">
+                  <option value="Sem 1">Sem 1</option>
+                  <option value="Sem 2">Sem 2</option>
+                  <option value="Sem 3">Sem 3</option>
+                  <option value="Sem 4">Sem 4</option>
+                  <option value="Sem 5">Sem 5</option>
+                  <option value="Sem 6">Sem 6</option>
+                  <option value="Sem 7">Sem 7</option>
+                  <option value="Sem 8">Sem 8</option>
+                  <option value="">Unassigned</option>
+                  <option value="__custom__">＋ Custom…</option>
+                </select>
+              </label>
+              <input id="cc-sem-custom" class="hidden" placeholder="e.g. 2026-27 Sem 1" style="flex:0 0 165px;height:34px;padding:5px 10px" />
+            </div>
+            <div class="form-row">
+              <input id="cc-name" placeholder="Course name (e.g. Data Structures)" style="height:34px;padding:5px 10px" />
+              <input id="cc-link" placeholder="HackerRank course link" style="height:34px;padding:5px 10px" />
+              <button id="cc-add" class="sm">＋ Add course</button>
+            </div>
+            <details class="bulk-details">
+              <summary>Bulk paste multiple links for this semester…</summary>
+              <div class="form-row">
+                <textarea id="cc-bulk" placeholder="Paste multiple links, one per line — auto-named Course 1, 2, 3…" rows="3" style="flex:1;min-width:260px"></textarea>
+                <button id="cc-bulk-add" class="ghost sm">Add all</button>
+              </div>
+            </details>
           </div>
-          <div class="form-row">
-            <input id="cc-name" placeholder="Course name (e.g. Data Structures)" />
-            <input id="cc-link" placeholder="HackerRank course link" />
-            <button id="cc-add">Add course</button>
+
+          <div class="filter-bar">
+            <select id="cc-sem-filter" title="Filter courses by semester"><option value="">All semesters</option></select>
+            <input id="cc-search" placeholder="Search course or slug…" />
+            <label class="inline-label"><input type="checkbox" id="cc-show-archived" checked /> Show archived</label>
           </div>
-          <div class="form-row">
-            <textarea id="cc-bulk" placeholder="Or paste multiple links for the chosen semester, one per line — auto-named Course 1, 2, 3…" rows="3" style="flex:1;min-width:280px"></textarea>
-            <button id="cc-bulk-add" class="ghost sm">Add all</button>
-          </div>
-          <div id="cc-status" class="status"></div>
+          <div id="cc-status" class="status" style="margin:0 0 8px"></div>
           <div class="table-scroll"><table id="cc-table" class="data-table"></table></div>
           <div id="cc-pager" class="pager"></div>
         </div>
@@ -224,21 +257,21 @@
       <section id="panel-daily" class="panel">
         <div class="card">
           <div class="card-head">
-            <h3>Daily questions completed <span class="muted" id="daily-note"></span></h3>
-            <div class="form-row" style="margin:0">
-              <label class="inline-label">College: <select id="daily-college"></select></label>
-              <label class="inline-label">Semester: <select id="daily-semester"><option value="">All semesters</option></select></label>
-              <label class="inline-label">Course: <select id="daily-contest"></select></label>
-              <label id="daily-link-wrap" class="inline-label hidden">Link / Label: <select id="daily-link"></select></label>
+            <h3 style="margin:0">Daily questions completed <span class="muted" id="daily-note"></span></h3>
+            <div class="toolbar-group">
+              <label class="inline-label">College <select id="daily-college"></select></label>
+              <label class="inline-label">Semester <select id="daily-semester"><option value="">All semesters</option></select></label>
+              <label class="inline-label">Course <select id="daily-contest"></select></label>
+              <label id="daily-link-wrap" class="inline-label hidden">Link <select id="daily-link"></select></label>
             </div>
           </div>
-          <p class="muted">Questions each student completed per day over the <b>last 10 days</b>, ending today. Days with no sync show a dot (no change recorded). Every student is listed, whether or not they rank on the leaderboard.</p>
-          <div class="form-row" style="margin:0 0 8px">
+          <p class="muted" style="margin:0 0 10px">Questions each student completed per day over the <b>last 10 days</b>, ending today. Days with no sync show a dot.</p>
+          <div class="filter-bar">
             <select id="daily-f-campus"><option value="">All campuses</option></select>
             <select id="daily-f-department"><option value="">All departments</option></select>
             <select id="daily-f-section"><option value="">All sections</option></select>
             <select id="daily-f-year"><option value="">All years</option></select>
-            <input id="daily-f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
+            <input id="daily-f-search" placeholder="Search name / username…" />
           </div>
           <div class="table-scroll"><table id="daily-table" class="data-table"></table></div>
           <div id="daily-table-pager" class="pager"></div>
@@ -249,27 +282,30 @@
       <section id="panel-topics" class="panel">
         <div class="card">
           <div class="card-head">
-            <h3>Assign topics to course questions</h3>
-            <div class="form-row" style="margin:0">
-              <label class="inline-label">College: <select id="t-college"></select></label>
-              <label class="inline-label">Semester: <select id="t-semester"><option value="">All semesters</option></select></label>
-              <label class="inline-label">Course: <select id="t-contest-sel"></select></label>
-              <label id="t-link-wrap" class="inline-label hidden">Link / Label: <select id="t-link"></select></label>
+            <h3 style="margin:0">Assign topics to course questions</h3>
+            <div class="toolbar-group">
               <button id="t-autofill" class="ghost sm">Auto-fill from titles</button>
-              <label class="inline-label">Set category: <select id="t-bulk-cat"></select></label>
-              <button id="t-bulk-apply" class="ghost sm" title="Set this category on every question below">Apply to all</button>
-              <button id="t-bulk-apply-blank" class="ghost sm" title="Only fill questions that have no category yet">Fill blanks only</button>
-              <button id="t-save">Save topics</button>
+              <button id="t-save" class="sm">Save topics</button>
             </div>
           </div>
-          <p class="muted">Pick a college, confirm its course link, then set a topic for each question. These power the “By topic” breakdowns. The course must be synced first (Dashboard tab).</p>
-          <div class="form-row">
-            <label class="inline-label" style="flex:1">Course link:
-              <input id="t-contest" placeholder="HackerRank course link" style="flex:1" />
-            </label>
-            <button id="t-savelink" class="ghost sm">Save link</button>
+          <div class="filter-bar" style="margin-bottom:8px">
+            <label class="inline-label">College <select id="t-college"></select></label>
+            <label class="inline-label">Semester <select id="t-semester"><option value="">All semesters</option></select></label>
+            <label class="inline-label">Course <select id="t-contest-sel"></select></label>
+            <label id="t-link-wrap" class="inline-label hidden">Link <select id="t-link"></select></label>
           </div>
-          <div id="t-status" class="status"></div>
+          <div class="toolbar-row" style="margin-bottom:10px">
+            <div class="toolbar-group" style="flex:1">
+              <label class="inline-label" style="flex:1">Link URL <input id="t-contest" placeholder="HackerRank course link" style="flex:1" /></label>
+              <button id="t-savelink" class="ghost sm">Save link</button>
+            </div>
+            <div class="toolbar-group">
+              <label class="inline-label">Category <select id="t-bulk-cat"></select></label>
+              <button id="t-bulk-apply" class="ghost sm" title="Set this category on every question below">Apply all</button>
+              <button id="t-bulk-apply-blank" class="ghost sm" title="Only fill questions that have no category yet">Fill blanks</button>
+            </div>
+          </div>
+          <div id="t-status" class="status" style="margin-top:0"></div>
           <div class="table-scroll"><table id="topics-table" class="data-table"></table></div>
         </div>
 
@@ -485,7 +521,7 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=7"></script>
-  <script src="/app.js?v=7"></script>
+  <script src="/theme.js?v=8"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>

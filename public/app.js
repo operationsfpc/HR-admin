@@ -561,10 +561,12 @@ function renderCcTable() {
         `<td class="muted" style="max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.contestUrl || '')}">${esc(c.contestUrl || '—')}</td>` +
         `<td>${shareHtml}</td>` +
         `<td style="text-align:center;white-space:nowrap">` +
-        `<button class="ghost sm" data-add-link="${c.id}" data-course-name="${esc(c.name)}" title="Add another labeled HackerRank link to this existing course" style="padding:2px 6px;margin-right:3px">＋ Link</button>` +
-        `<button class="ghost sm" data-export-course="${c.id}" data-course-name="${esc(c.name)}" title="Export Formatted Course Excel Report" style="padding:2px 6px;margin-right:3px">📥</button>` +
-        `<button class="ghost sm" data-archive-course="${c.id}" data-archived="${c.isArchived ? '1' : '0'}" title="${c.isArchived ? 'Restore (Unarchive) Course' : 'Archive Course (keeps all progress)'}" style="padding:2px 6px;margin-right:3px">${c.isArchived ? '↩' : '📦'}</button>` +
-        `<button class="ghost sm danger" data-delcc="${c.id}" title="Delete Course" style="padding:2px 6px">🗑</button>` +
+        `<div style="display:inline-flex;align-items:center;gap:4px">` +
+        `<button class="ghost xs" data-add-link="${c.id}" data-course-name="${esc(c.name)}" title="Add another labeled HackerRank link to this existing course">＋ Link</button>` +
+        `<button class="ghost xs" data-export-course="${c.id}" data-course-name="${esc(c.name)}" title="Export Formatted Course Excel Report">📥</button>` +
+        `<button class="ghost xs" data-archive-course="${c.id}" data-archived="${c.isArchived ? '1' : '0'}" title="${c.isArchived ? 'Restore (Unarchive) Course' : 'Archive Course (keeps all progress)'}">${c.isArchived ? '↩' : '📦'}</button>` +
+        `<button class="ghost xs danger" data-delcc="${c.id}" title="Delete Course">🗑</button>` +
+        `</div>` +
         `</td>` +
         `</tr>`;
     }).join('')
@@ -1197,21 +1199,52 @@ function renderDashLinksBar(ct) {
 
   if (links.length <= 1) {
     const primary = links[0];
-    bar.innerHTML = `<span class="muted" style="font-size:.8rem">Current link label: <b>${esc(primary?.label || 'Main')}</b></span>` +
-      `<button class="ghost sm" data-rename-link="primary" data-cur-label="${esc(primary?.label || '')}" style="padding:2px 7px;font-size:.76rem">✎ Rename label</button>`;
+    bar.innerHTML =
+      `<span class="muted" style="font-size:.8rem">Link label:</span>` +
+      `<span class="link-chip active">` +
+      `<span>${esc(primary?.label || 'Main')}</span>` +
+      `<button class="link-chip-btn" data-rename-link="primary" data-cur-label="${esc(primary?.label || '')}" title="Rename label">✎</button>` +
+      `</span>`;
     return;
   }
-  bar.innerHTML = `<span class="muted" style="font-size:.8rem">Attached links:</span>` +
+  bar.innerHTML = `<span class="muted" style="font-size:.8rem">Course links:</span>` +
     links.map((l) => {
       const isAct = String(selectedLinkId) === String(l.id);
-      return `<span class="chip" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;${isAct ? 'outline:2px solid var(--accent);font-weight:600' : ''}">` +
-        `<a href="#" data-pick-link="${esc(l.id)}" style="text-decoration:none;color:inherit">${esc(l.label)}</a>` +
-        `<button class="ghost sm" data-rename-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Rename label" style="padding:0 4px;font-size:.74rem">✎</button>` +
-        (l.isPrimary ? '' : `<button class="ghost sm danger" data-del-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Remove link" style="padding:0 4px;font-size:.74rem">✕</button>`) +
+      return `<span class="link-chip${isAct ? ' active' : ''}">` +
+        `<a href="#" data-pick-link="${esc(l.id)}">${esc(l.label)}</a>` +
+        `<button class="link-chip-btn" data-rename-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Rename label">✎</button>` +
+        (l.isPrimary ? '' : `<button class="link-chip-btn danger" data-del-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Remove link">✕</button>`) +
         `</span>`;
     }).join('') +
-    `<span class="chip" style="padding:3px 8px;cursor:pointer;${selectedLinkId === 'all' ? 'outline:2px solid var(--accent);font-weight:600' : ''}" data-pick-link="all">All (${links.length})</span>`;
+    `<span class="link-chip${selectedLinkId === 'all' ? ' active' : ''}" style="cursor:pointer" data-pick-link="all">All (${links.length})</span>`;
 }
+
+// Collapsible panels on Dashboard
+$('dash-toggle-add-link')?.addEventListener('click', () => {
+  const box = $('dash-add-link-box');
+  if (!box) return;
+  const open = box.classList.toggle('hidden') === false;
+  $('dash-toggle-add-link').classList.toggle('active-filter', open);
+  if (open) {
+    $('dash-settings-box')?.classList.add('hidden');
+    $('dash-toggle-settings')?.classList.remove('active-filter');
+    $('dash-new-link-label')?.focus();
+  }
+});
+$('dash-cancel-add-link')?.addEventListener('click', () => {
+  $('dash-add-link-box')?.classList.add('hidden');
+  $('dash-toggle-add-link')?.classList.remove('active-filter');
+});
+$('dash-toggle-settings')?.addEventListener('click', () => {
+  const box = $('dash-settings-box');
+  if (!box) return;
+  const open = box.classList.toggle('hidden') === false;
+  $('dash-toggle-settings').classList.toggle('active-filter', open);
+  if (open) {
+    $('dash-add-link-box')?.classList.add('hidden');
+    $('dash-toggle-add-link')?.classList.remove('active-filter');
+  }
+});
 
 function showContestLink() {
   const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
@@ -1266,6 +1299,8 @@ $('dash-add-link-btn')?.addEventListener('click', async () => {
     const r = await api(`/api/contests/${selectedContestId}/links`, { method: 'POST', body: { label, contestUrl } });
     $('dash-new-link-label').value = '';
     $('dash-new-link-url').value = '';
+    $('dash-add-link-box')?.classList.add('hidden');
+    $('dash-toggle-add-link')?.classList.remove('active-filter');
     selectedLinkId = String(r.link?.id || 'primary');
     clearDashCache();
     setStatus($('dash-status'), `Attached "${label}" to this course. Click Sync now to fetch its progress!`, 'ok');
