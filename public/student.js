@@ -47,6 +47,22 @@ async function onContinue() {
   loadPractice();
 }
 
+function buildGroupedContestHtml(list) {
+  if (!list.length) return `<option value="">No courses assigned to you</option>`;
+  const groups = new Map();
+  for (const c of list) {
+    const k = (c.semester || '').trim() || 'Unassigned';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  const opt = (c) => `<option value="${c.id}">${esc(c.name)}${c.isArchived ? ' [Archived]' : ''}</option>`;
+  if (groups.size > 1 || !groups.has('Unassigned')) {
+    const keys = Array.from(groups.keys()).sort((a, b) => a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b, undefined, { numeric: true }));
+    return keys.map((k) => `<optgroup label="${esc(k)}">${groups.get(k).map(opt).join('')}</optgroup>`).join('');
+  }
+  return list.map(opt).join('');
+}
+
 // When the student picks their name, load only the contests mapped to them.
 $('name-select').addEventListener('change', async (e) => {
   const hrUsername = e.target.value;
@@ -55,7 +71,7 @@ $('name-select').addEventListener('change', async (e) => {
   try {
     const d = await post('/api/student/contests', { college, accessCode: code, hrUsername });
     contests = d.contests || [];
-    $('contest-select').innerHTML = contests.length ? contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('') : `<option value="">No courses assigned to you</option>`;
+    $('contest-select').innerHTML = buildGroupedContestHtml(contests);
     $('contest-row').style.display = 'flex';
     setStatus($('login-status'), contests.length ? 'Pick your course, then Continue.' : 'No courses are assigned to you yet.', contests.length ? 'ok' : 'err');
   } catch (err) { setStatus($('login-status'), err.message, 'err'); }
@@ -74,7 +90,7 @@ function render(d) {
   const me = students.find((s) => s.hrUsername === hrUsername);
   const who = $('who'); who.textContent = `${me?.name || hrUsername}`; who.classList.remove('hidden');
   $('logout-btn2').classList.remove('hidden');
-  $('sv-contest-switch').innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('sv-contest-switch').innerHTML = buildGroupedContestHtml(contests);
   if (contests.some((c) => String(c.id) === String(cur.contestId))) $('sv-contest-switch').value = cur.contestId;
 
   topicVideos = d.topicVideos || {};

@@ -45,6 +45,30 @@ function applyPayload(d) {
   $('view-status').textContent = ''; $('view-status').className = 'status';
   fillFilters(); renderSummary(); renderTopicAnalysis(); renderCompletion(); renderCategoryChart(); renderStudents(); renderDaily();
 }
+let collegeContests = [];
+function renderViewContestSelect(semFilter = '') {
+  const sel = $('view-contest');
+  const filtered = !semFilter
+    ? collegeContests
+    : semFilter === '__unassigned__'
+      ? collegeContests.filter((c) => !(c.semester || '').trim())
+      : collegeContests.filter((c) => (c.semester || '').trim() === semFilter);
+  const groups = new Map();
+  for (const c of filtered) {
+    const k = (c.semester || '').trim() || 'Unassigned';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  const optHtml = (c) => `<option value="${c.id}">${esc(c.name)}${c.isArchived ? ' [Archived]' : ''}${c.hasLink ? '' : ' (no link)'}</option>`;
+  const useGroups = groups.size > 1 || !groups.has('Unassigned');
+  if (useGroups) {
+    const keys = Array.from(groups.keys()).sort((a, b) => a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b, undefined, { numeric: true }));
+    sel.innerHTML = keys.map((k) => `<optgroup label="${esc(k)}">${groups.get(k).map(optHtml).join('')}</optgroup>`).join('');
+  } else {
+    sel.innerHTML = filtered.map(optHtml).join('');
+  }
+  return filtered;
+}
 async function boot() {
   try {
     if (isCollege) {
@@ -53,13 +77,28 @@ async function boot() {
       if (!res.ok) throw new Error(d.error || 'Not found');
       applyTabs(d.tabs);
       $('view-title').textContent = d.college; document.title = d.college;
-      const contests = d.contests || [];
-      if (!contests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
-      if (contests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
+      collegeContests = d.contests || [];
+      if (!collegeContests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
+      if (collegeContests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
+
+      const sems = Array.from(new Set(collegeContests.map((c) => (c.semester || '').trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const hasUnassigned = collegeContests.some((c) => !(c.semester || '').trim());
+      if (sems.length && $('view-sem-wrap') && $('view-sem')) {
+        $('view-sem-wrap').classList.remove('hidden');
+        $('view-sem').innerHTML = `<option value="">All semesters</option>` +
+          sems.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('') +
+          (hasUnassigned ? `<option value="__unassigned__">Unassigned</option>` : '');
+        $('view-sem').onchange = () => {
+          const list = renderViewContestSelect($('view-sem').value);
+          if (list.length) loadCollegeContest(list[0].id);
+        };
+      }
+
       const sel = $('view-contest'); $('view-contest-wrap').classList.remove('hidden');
-      sel.innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}${c.hasLink ? '' : ' (no link)'}</option>`).join('');
+      const initial = renderViewContestSelect('');
       sel.onchange = () => loadCollegeContest(sel.value);
-      await loadCollegeContest(contests[0].id);
+      if (initial.length) await loadCollegeContest(initial[0].id);
     } else {
       const res = await fetch('/api/shared/' + token);
       const d = await res.json();

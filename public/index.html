@@ -49,6 +49,7 @@
             <h3>Dashboard</h3>
             <div class="form-row" style="margin:0">
               <label class="inline-label">College: <select id="dash-college"></select></label>
+              <label class="inline-label">Semester: <select id="dash-semester"><option value="">All semesters</option></select></label>
               <label class="inline-label">Course: <select id="dash-contest"></select></label>
               <button id="contest-add" class="ghost sm">＋ Course</button>
               <button id="contest-del" class="ghost sm danger">🗑</button>
@@ -119,7 +120,8 @@
               <select id="f-section"><option value="">All sections</option></select>
               <select id="f-year"><option value="">All years</option></select>
               <input id="f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
-              <button id="export-btn" class="ghost sm">⬇ Export Excel</button>
+              <button id="export-btn" class="ghost sm" title="Download formatted multi-sheet Excel report for this course">⬇ Export Course Excel</button>
+              <button id="export-college-btn" class="ghost sm" title="Download formatted multi-sheet Excel report across all courses in the selected semester (or all semesters)">⬇ Export Semester/College</button>
               <button id="del-btn" class="ghost sm danger">🗑 Delete selected</button>
             </div>
           </div>
@@ -171,20 +173,38 @@
           <div class="card-head">
             <h3>Course links for a college</h3>
             <div class="form-row" style="margin:0">
-              <input id="cc-search" placeholder="Search course…" style="flex:0 0 200px" />
+              <select id="cc-sem-filter" title="Filter courses by semester"><option value="">All semesters</option></select>
+              <label class="inline-label" style="font-size:.82rem"><input type="checkbox" id="cc-show-archived" checked /> Show archived</label>
+              <input id="cc-search" placeholder="Search course…" style="flex:0 0 180px" />
+              <button id="cc-export-sem" class="ghost sm" title="Export Excel for the selected college & semester filter">📥 Export Excel</button>
             </div>
           </div>
-          <p class="muted">Add one or more HackerRank course links to a college. Each becomes a course you can sync (Dashboard) and tag (Topics).</p>
+          <p class="muted">Add HackerRank course links per <b>semester</b>. Adding a new semester's contest creates a separate course so previous semesters' progress is never overwritten.</p>
           <div class="form-row">
             <label class="inline-label" style="flex:1">College: <select id="cc-college" style="flex:1"></select></label>
+            <label class="inline-label">Semester:
+              <select id="cc-sem">
+                <option value="Sem 1">Sem 1</option>
+                <option value="Sem 2">Sem 2</option>
+                <option value="Sem 3">Sem 3</option>
+                <option value="Sem 4">Sem 4</option>
+                <option value="Sem 5">Sem 5</option>
+                <option value="Sem 6">Sem 6</option>
+                <option value="Sem 7">Sem 7</option>
+                <option value="Sem 8">Sem 8</option>
+                <option value="">Unassigned</option>
+                <option value="__custom__">＋ Custom…</option>
+              </select>
+            </label>
+            <input id="cc-sem-custom" class="hidden" placeholder="e.g. 2026-27 Sem 1" style="flex:0 0 165px" />
           </div>
           <div class="form-row">
-            <input id="cc-name" placeholder="Course name (e.g. Round 1)" />
+            <input id="cc-name" placeholder="Course name (e.g. Data Structures)" />
             <input id="cc-link" placeholder="HackerRank course link" />
             <button id="cc-add">Add course</button>
           </div>
           <div class="form-row">
-            <textarea id="cc-bulk" placeholder="Or paste multiple links, one per line — auto-named Course 1, 2, 3…" rows="3" style="flex:1;min-width:280px"></textarea>
+            <textarea id="cc-bulk" placeholder="Or paste multiple links for the chosen semester, one per line — auto-named Course 1, 2, 3…" rows="3" style="flex:1;min-width:280px"></textarea>
             <button id="cc-bulk-add" class="ghost sm">Add all</button>
           </div>
           <div id="cc-status" class="status"></div>
@@ -200,6 +220,7 @@
             <h3>Daily questions completed <span class="muted" id="daily-note"></span></h3>
             <div class="form-row" style="margin:0">
               <label class="inline-label">College: <select id="daily-college"></select></label>
+              <label class="inline-label">Semester: <select id="daily-semester"><option value="">All semesters</option></select></label>
               <label class="inline-label">Course: <select id="daily-contest"></select></label>
             </div>
           </div>
@@ -223,6 +244,7 @@
             <h3>Assign topics to course questions</h3>
             <div class="form-row" style="margin:0">
               <label class="inline-label">College: <select id="t-college"></select></label>
+              <label class="inline-label">Semester: <select id="t-semester"><option value="">All semesters</option></select></label>
               <label class="inline-label">Course: <select id="t-contest-sel"></select></label>
               <button id="t-autofill" class="ghost sm">Auto-fill from titles</button>
               <label class="inline-label">Set category: <select id="t-bulk-cat"></select></label>
@@ -382,7 +404,13 @@
   <!-- Student performance modal -->
   <div id="perf-modal" class="modal-overlay hidden">
     <div class="modal wide">
-      <div class="card-head"><h3 id="perf-title"></h3><button id="perf-close" class="ghost sm" title="Close">✕</button></div>
+      <div class="card-head">
+        <h3 id="perf-title"></h3>
+        <div class="form-row" style="margin:0;gap:6px">
+          <button id="perf-export-btn" class="ghost sm hidden" title="Download this student's complete cross-semester progress Excel report">⬇ Export Student Excel</button>
+          <button id="perf-close" class="ghost sm" title="Close">✕</button>
+        </div>
+      </div>
       <div id="perf-meta" class="muted"></div>
       <div id="perf-stats"></div>
       <div id="perf-topics"></div>
@@ -448,7 +476,7 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=5"></script>
-  <script src="/app.js?v=5"></script>
+  <script src="/theme.js?v=6"></script>
+  <script src="/app.js?v=6"></script>
 </body>
 </html>
