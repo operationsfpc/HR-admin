@@ -1213,7 +1213,7 @@ function renderDashLinksBar(ct) {
       return `<span class="link-chip${isAct ? ' active' : ''}">` +
         `<a href="#" data-pick-link="${esc(l.id)}">${esc(l.label)}</a>` +
         `<button class="link-chip-btn" data-rename-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Rename label">✎</button>` +
-        (l.isPrimary ? '' : `<button class="link-chip-btn danger" data-del-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Remove link">✕</button>`) +
+        (l.isPrimary ? '' : `<button class="link-chip-btn remove" data-del-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Remove link">✕</button>`) +
         `</span>`;
     }).join('') +
     `<span class="link-chip${selectedLinkId === 'all' ? ' active' : ''}" style="cursor:pointer" data-pick-link="all">All (${links.length})</span>`;

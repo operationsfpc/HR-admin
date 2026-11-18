@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HackerRank Admin Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
-  <link rel="stylesheet" href="/styles.css?v=6" />
+  <link rel="stylesheet" href="/styles.css?v=7" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -46,13 +46,7 @@
       <section id="panel-dashboard" class="panel active">
         <div class="card">
           <div class="toolbar-row">
-            <div class="toolbar-group">
-              <h3 style="margin:0 4px 0 0">Dashboard</h3>
-              <label class="inline-label">College <select id="dash-college"></select></label>
-              <label class="inline-label">Semester <select id="dash-semester"><option value="">All semesters</option></select></label>
-              <label class="inline-label">Course <select id="dash-contest"></select></label>
-              <label id="dash-link-wrap" class="inline-label hidden">Link <select id="dash-link"></select></label>
-            </div>
+            <h3 style="margin:0">Dashboard</h3>
             <div class="toolbar-group">
               <button id="sync-btn" class="sm">⟳ Sync now</button>
               <button id="dash-toggle-add-link" class="ghost sm" title="Attach another labeled HackerRank link to this course">＋ Add Link</button>
@@ -61,6 +55,13 @@
               <button id="share-college-btn" class="ghost sm" title="Copy read-only share link for the whole college">🔗 Share college</button>
               <button id="dash-toggle-settings" class="ghost sm" title="Manage course link URL, shared tabs, and bulk sync">⚙ More</button>
             </div>
+          </div>
+
+          <div class="selector-bar">
+            <label class="inline-label">College <select id="dash-college"></select></label>
+            <label class="inline-label" style="flex:0 1 190px">Semester <select id="dash-semester"><option value="">All semesters</option></select></label>
+            <label class="inline-label" style="flex:1.4 1 240px">Course <select id="dash-contest"></select></label>
+            <label id="dash-link-wrap" class="inline-label hidden" style="display:none!important">Link <select id="dash-link"></select></label>
           </div>
 
           <div id="dash-links-bar" class="link-chips-bar"></div>
@@ -521,7 +522,7 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=8"></script>
-  <script src="/app.js?v=8"></script>
+  <script src="/theme.js?v=9"></script>
+  <script src="/app.js?v=9"></script>
 </body>
 </html>
