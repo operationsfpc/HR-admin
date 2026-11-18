@@ -22,11 +22,17 @@ CREATE TABLE IF NOT EXISTS hackerrank.students (
 CREATE TABLE IF NOT EXISTS hackerrank.contests (
   id bigint generated always as identity primary key,
   college text, name text, contest_url text, slug text, share_token text,
+  course text NOT NULL DEFAULT '',
+  study_year text NOT NULL DEFAULT '',
   semester text NOT NULL DEFAULT '',
+  subject text NOT NULL DEFAULT '',
   is_archived boolean NOT NULL DEFAULT false,
   created_at timestamptz default now()
 );
+ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS course text NOT NULL DEFAULT '';
+ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS study_year text NOT NULL DEFAULT '';
 ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS semester text NOT NULL DEFAULT '';
+ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS subject text NOT NULL DEFAULT '';
 ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS hackerrank.contest_students (
