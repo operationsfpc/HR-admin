@@ -47,6 +47,16 @@ async function onContinue() {
   loadPractice();
 }
 
+function formatContestLabel(c) {
+  if (!c) return '';
+  const parts = [c.subject || c.name, c.semester, c.course, c.studyYear].filter((s) => s && s !== 'General');
+  return parts.length ? parts.join(' · ') : (c.name || '');
+}
+function buildStudentContestOptions(list) {
+  if (!list.length) return `<option value="">No courses assigned to you</option>`;
+  return list.map((c) => `<option value="${c.id}">${esc(formatContestLabel(c))}${c.isArchived ? ' [Archived]' : ''}</option>`).join('');
+}
+
 // When the student picks their name, load only the contests mapped to them.
 $('name-select').addEventListener('change', async (e) => {
   const hrUsername = e.target.value;
@@ -55,7 +65,7 @@ $('name-select').addEventListener('change', async (e) => {
   try {
     const d = await post('/api/student/contests', { college, accessCode: code, hrUsername });
     contests = d.contests || [];
-    $('contest-select').innerHTML = contests.length ? contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('') : `<option value="">No courses assigned to you</option>`;
+    $('contest-select').innerHTML = buildStudentContestOptions(contests);
     $('contest-row').style.display = 'flex';
     setStatus($('login-status'), contests.length ? 'Pick your course, then Continue.' : 'No courses are assigned to you yet.', contests.length ? 'ok' : 'err');
   } catch (err) { setStatus($('login-status'), err.message, 'err'); }
@@ -74,7 +84,7 @@ function render(d) {
   const me = students.find((s) => s.hrUsername === hrUsername);
   const who = $('who'); who.textContent = `${me?.name || hrUsername}`; who.classList.remove('hidden');
   $('logout-btn2').classList.remove('hidden');
-  $('sv-contest-switch').innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('sv-contest-switch').innerHTML = buildStudentContestOptions(contests);
   if (contests.some((c) => String(c.id) === String(cur.contestId))) $('sv-contest-switch').value = cur.contestId;
 
   topicVideos = d.topicVideos || {};
@@ -88,7 +98,7 @@ function render(d) {
   const pct = st.completion || Math.round((st.solved / st.total) * 100);
   $('sv-header').innerHTML =
     `<div class="hero-top">
-       <div><h1>${esc(me?.name || hrUsername)}</h1><div class="hero-sub">${esc(college)} · <b>${esc(d.contest.name)}</b></div></div>
+       <div><h1>${esc(me?.name || hrUsername)}</h1><div class="hero-sub">${esc(college)} · <b>${esc(formatContestLabel(d.contest))}</b></div></div>
        <div class="hero-ring" style="--p:${pct}"><span>${pct}%</span></div>
      </div>`;
 

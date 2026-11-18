@@ -21,8 +21,109 @@ async function api(path, { method = 'GET', body, auth = true } = {}) {
   const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && auth) { logout(); throw new Error(data.error || 'Session expired.'); }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    err.status = res.status; err.code = data.code; err.data = data;
+    throw err;
+  }
   return data;
+}
+
+async function downloadAuthExcel(url, fallbackName, statusEl) {
+  if (statusEl) setStatus(statusEl, 'Generating formatted Excel report…', 'info');
+  try {
+    const headers = {};
+    if (adminToken) headers['x-admin-token'] = adminToken;
+    const res = await fetch(url, { headers });
+    if (res.status === 401) { logout(); throw new Error('Session expired.'); }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Export failed (${res.status})`); }
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = cd.match(/filename="?([^"]+)"?/i);
+    const filename = (m && m[1]) || (fallbackName.endsWith('.xlsx') ? fallbackName : `${fallbackName}.xlsx`);
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = objUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+    if (statusEl) setStatus(statusEl, `Downloaded ${filename}`, 'ok');
+    return true;
+  } catch (e) {
+    if (statusEl) setStatus(statusEl, `Export failed: ${e.message}`, 'err');
+    return false;
+  }
+}
+
+// ---------- Structured Course / Year / Sem / Subject Cascade Helpers ----------
+const YEAR_ORDER = { 'I Year': 1, 'II Year': 2, 'III Year': 3, 'IV Year': 4, 'General': 99 };
+const SEM_ORDER = { 'Sem 1': 1, 'Sem 2': 2, 'Sem 3': 3, 'Sem 4': 4, 'Sem 5': 5, 'Sem 6': 6, 'Sem 7': 7, 'Sem 8': 8, 'General': 99 };
+const SUBJ_ORDER = { 'FOP': 1, 'OOPS Java': 2, 'OOPS': 2, 'Data Structures': 3, 'Algorithms': 4 };
+const sortYear = (a, b) => (YEAR_ORDER[a] || 50) - (YEAR_ORDER[b] || 50) || a.localeCompare(b, undefined, { numeric: true });
+const sortSem = (a, b) => (SEM_ORDER[a] || 50) - (SEM_ORDER[b] || 50) || a.localeCompare(b, undefined, { numeric: true });
+const sortSubj = (a, b) => (SUBJ_ORDER[a] || 50) - (SUBJ_ORDER[b] || 50) || a.localeCompare(b, undefined, { numeric: true });
+
+function formatContestLabel(c) {
+  if (!c) return '';
+  const parts = [c.course, c.studyYear, c.semester, c.subject].map((s) => String(s || '').trim()).filter(Boolean);
+  return parts.length ? parts.join(' · ') : (c.name || '');
+}
+
+function syncCascade(contests, { courseEl, yearEl, semEl, subjectEl }, { preferId = '' } = {}) {
+  if (!courseEl || !yearEl || !semEl || !subjectEl) return null;
+  if (!contests || !contests.length) {
+    courseEl.innerHTML = `<option value="">—</option>`;
+    yearEl.innerHTML = `<option value="">—</option>`;
+    semEl.innerHTML = `<option value="">—</option>`;
+    subjectEl.innerHTML = `<option value="">No courses</option>`;
+    return null;
+  }
+  const pref = preferId ? contests.find((c) => String(c.id) === String(preferId)) : null;
+
+  const courses = Array.from(new Set(contests.map((c) => (c.course || 'General').trim()))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const prevCourse = pref ? (pref.course || 'General') : courseEl.value;
+  courseEl.innerHTML = courses.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  courseEl.value = courses.includes(prevCourse) ? prevCourse : courses[0];
+
+  const byCourse = contests.filter((c) => (c.course || 'General').trim() === courseEl.value);
+  const years = Array.from(new Set(byCourse.map((c) => (c.studyYear || 'General').trim()))).sort(sortYear);
+  const prevYear = pref ? (pref.studyYear || 'General') : yearEl.value;
+  yearEl.innerHTML = years.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  yearEl.value = years.includes(prevYear) ? prevYear : years[0];
+
+  const byYear = byCourse.filter((c) => (c.studyYear || 'General').trim() === yearEl.value);
+  const sems = Array.from(new Set(byYear.map((c) => (c.semester || 'General').trim()))).sort(sortSem);
+  const prevSem = pref ? (pref.semester || 'General') : semEl.value;
+  semEl.innerHTML = sems.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  semEl.value = sems.includes(prevSem) ? prevSem : sems[0];
+
+  const bySem = byYear.filter((c) => (c.semester || 'General').trim() === semEl.value)
+    .sort((a, b) => sortSubj(a.subject || a.name || '', b.subject || b.name || ''));
+  const prevSubj = pref ? String(pref.id) : subjectEl.value;
+  subjectEl.innerHTML = bySem.map((c) => `<option value="${c.id}">${esc(c.subject || c.name)}${c.isArchived ? ' [Archived]' : ''}${c.slug ? '' : ' (no link)'}</option>`).join('');
+  subjectEl.value = bySem.some((c) => String(c.id) === String(prevSubj)) ? prevSubj : String(bySem[0].id);
+
+  return bySem.find((c) => String(c.id) === String(subjectEl.value)) || bySem[0] || null;
+}
+
+async function saveContestLinkWithGuard(contestId, contestUrl, statusEl, onSaved) {
+  try {
+    await api('/api/contests/' + contestId, { method: 'PUT', body: { contestUrl } });
+    setStatus(statusEl, 'Course link saved. Sync it now.', 'ok');
+    clearDashCache(contestId);
+    if (onSaved) await onSaved();
+  } catch (e) {
+    if (e.status === 409 && e.code === 'PROGRESS_EXISTS') {
+      const ok = confirm(`${e.message}\n\nClick Cancel to keep old progress safe.\nClick OK ONLY if fixing a typo in the URL.`);
+      if (!ok) return;
+      try {
+        await api('/api/contests/' + contestId, { method: 'PUT', body: { contestUrl, force: true } });
+        setStatus(statusEl, 'Course link updated.', 'ok');
+        clearDashCache(contestId);
+        if (onSaved) await onSaved();
+      } catch (e2) { setStatus(statusEl, e2.message, 'err'); }
+    } else {
+      setStatus(statusEl, e.message, 'err');
+    }
+  }
 }
 
 // ---------- Admin auth ----------
@@ -342,18 +443,62 @@ $('colleges-table').addEventListener('click', async (e) => {
 // ---------- Contest links (Colleges tab) ----------
 $('cc-college').addEventListener('change', () => { ccPage = 1; loadCollegeContests(); });
 $('cc-search')?.addEventListener('input', () => { ccPage = 1; renderCcTable(); });
+['cc-course-filter', 'cc-year-filter', 'cc-sem-filter', 'cc-show-archived'].forEach((id) =>
+  $(id)?.addEventListener('change', () => { ccPage = 1; renderCcTable(); })
+);
+$('cc-export-sem')?.addEventListener('click', () => {
+  const id = $('cc-college').value;
+  if (!id) return setStatus($('cc-status'), 'Pick a college first.', 'err');
+  const colName = $('cc-college').options[$('cc-college').selectedIndex]?.textContent || 'College';
+  exportSingleCollege(id, colName, {
+    course: $('cc-course-filter')?.value || '',
+    studyYear: $('cc-year-filter')?.value || '',
+    semester: $('cc-sem-filter')?.value || '',
+  }, $('cc-status'));
+});
 
 async function loadCollegeContests() {
   const id = $('cc-college').value;
   if (!id) { ccContests = []; renderCcTable(); return; }
   ccContests = (await api('/api/contests?collegeId=' + id)).contests || [];
+
+  // Populate datalists & filter dropdowns from this college's courses
+  const courses = Array.from(new Set(ccContests.map((c) => (c.course || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const years = Array.from(new Set(ccContests.map((c) => (c.studyYear || '').trim()).filter(Boolean))).sort(sortYear);
+  const sems = Array.from(new Set(ccContests.map((c) => (c.semester || '').trim()).filter(Boolean))).sort(sortSem);
+
+  if ($('cc-course-list')) $('cc-course-list').innerHTML = courses.map((v) => `<option value="${esc(v)}"></option>`).join('');
+  const fillFilter = (sel, label, vals) => {
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = `<option value="">All ${label}</option>` + vals.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    sel.value = vals.includes(prev) ? prev : '';
+  };
+  fillFilter($('cc-course-filter'), 'courses', courses);
+  fillFilter($('cc-year-filter'), 'years', years);
+  fillFilter($('cc-sem-filter'), 'semesters', sems);
+
+  if ($('cc-copy-from')) {
+    $('cc-copy-from').innerHTML = `<option value="">Copy roster from: (none)</option>` +
+      ccContests.map((c) => `<option value="${c.id}">${esc(formatContestLabel(c))}</option>`).join('');
+  }
   renderCcTable();
 }
 
 function getFilteredCcContests() {
   const q = ($('cc-search')?.value || '').trim().toLowerCase();
-  if (!q) return ccContests;
-  return ccContests.filter((c) => (c.name || '').toLowerCase().includes(q) || (c.slug || '').toLowerCase().includes(q));
+  const cf = $('cc-course-filter')?.value || '';
+  const yf = $('cc-year-filter')?.value || '';
+  const sf = $('cc-sem-filter')?.value || '';
+  const showArch = $('cc-show-archived') ? $('cc-show-archived').checked : true;
+  return ccContests.filter((c) => {
+    if (!showArch && c.isArchived) return false;
+    if (cf && (c.course || '') !== cf) return false;
+    if (yf && (c.studyYear || '') !== yf) return false;
+    if (sf && (c.semester || '') !== sf) return false;
+    if (!q) return true;
+    return [c.course, c.studyYear, c.semester, c.subject, c.name, c.slug].some((v) => String(v || '').toLowerCase().includes(q));
+  });
 }
 
 function renderCcTable() {
@@ -369,34 +514,43 @@ function renderCcTable() {
     `<thead><tr>` +
     `<th>#</th>` +
     `<th>Course</th>` +
+    `<th>Year</th>` +
+    `<th>Sem</th>` +
+    `<th>Subject</th>` +
     `<th>Slug</th>` +
-    `<th>HackerRank Link</th>` +
-    `<th>🔗 Share Course</th>` +
+    `<th>🔗 Share</th>` +
     `<th style="text-align:center">Actions</th>` +
     `</tr></thead><tbody>` +
     (rows.length ? rows.map((c, i) => {
       const shareUrl = c.shareToken ? `${location.origin}/view/${c.shareToken}` : '';
       const shareHtml = shareUrl
         ? `<div style="display:flex;align-items:center;gap:4px">` +
-          `<span style="font-family:monospace;font-size:.74rem;background:var(--surface2);padding:2px 6px;border-radius:4px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(shareUrl)}">/view/${esc(c.shareToken)}</span>` +
-          `<button class="ghost sm" data-copy-course-share="${c.id}" data-url="${esc(shareUrl)}" title="Copy Course Link" style="padding:2px 6px">📋</button>` +
-          `<a href="${esc(shareUrl)}" target="_blank" class="ghost sm" style="text-decoration:none;padding:2px 6px;display:inline-block" title="Open Course Share Link">↗</a>` +
+          `<span style="font-family:monospace;font-size:.74rem;background:var(--surface2);padding:2px 6px;border-radius:4px;max-width:115px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(shareUrl)}">/view/${esc(c.shareToken)}</span>` +
+          `<button class="ghost xs" data-copy-course-share="${c.id}" data-url="${esc(shareUrl)}" title="Copy Share Link">📋</button>` +
+          `<a href="${esc(shareUrl)}" target="_blank" class="ghost xs" style="text-decoration:none;display:inline-flex;align-items:center;padding:0 6px;height:28px;border:1px solid var(--border);border-radius:6px" title="Open Share Link">↗</a>` +
           `</div>`
-        : `<button class="ghost sm" data-gen-course-share="${c.id}" style="font-size:.76rem;padding:2px 6px">🔗 Create Link</button>`;
+        : `<button class="ghost xs" data-gen-course-share="${c.id}">🔗 Link</button>`;
+      const archBadge = c.isArchived ? ` <span class="chip" style="font-size:.68rem;opacity:.75">Archived</span>` : '';
 
-      return `<tr>` +
+      return `<tr style="${c.isArchived ? 'opacity:.7' : ''}">` +
         `<td class="num">${start + i + 1}</td>` +
-        `<td><b>${esc(c.name)}</b></td>` +
-        `<td>${c.slug ? `<span class="chip" style="font-size:.74rem">${esc(c.slug)}</span>` : '<span class="muted">—</span>'}</td>` +
-        `<td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.contestUrl || '')}">${esc(c.contestUrl || '—')}</td>` +
+        `<td><b>${esc(c.course || '—')}</b></td>` +
+        `<td>${esc(c.studyYear || '—')}</td>` +
+        `<td><span class="chip" style="font-size:.74rem">${esc(c.semester || '—')}</span></td>` +
+        `<td><b>${esc(c.subject || c.name)}</b>${archBadge}</td>` +
+        `<td>${c.slug ? `<span class="chip" style="font-size:.72rem" title="${esc(c.contestUrl || '')}">${esc(c.slug)}</span>` : '<span class="muted">no link</span>'}</td>` +
         `<td>${shareHtml}</td>` +
         `<td style="text-align:center;white-space:nowrap">` +
-        `<button class="ghost sm" data-export-course="${c.id}" data-course-name="${esc(c.name)}" title="Export Course Results to Excel" style="padding:2px 6px;margin-right:4px">📥</button>` +
-        `<button class="ghost sm danger" data-delcc="${c.id}" title="Delete Course" style="padding:2px 6px">🗑</button>` +
+        `<div style="display:inline-flex;align-items:center;gap:4px">` +
+        `<button class="ghost xs" data-edit-course="${c.id}" title="Edit Course / Year / Sem / Subject / URL">✏️</button>` +
+        `<button class="ghost xs" data-export-course="${c.id}" data-course-name="${esc(formatContestLabel(c))}" title="Export Formatted Excel Report">📥</button>` +
+        `<button class="ghost xs" data-archive-course="${c.id}" data-archived="${c.isArchived ? '1' : '0'}" title="${c.isArchived ? 'Unarchive' : 'Archive'}">${c.isArchived ? '↩' : '📦'}</button>` +
+        `<button class="ghost xs danger" data-delcc="${c.id}" title="Delete">🗑</button>` +
+        `</div>` +
         `</td>` +
         `</tr>`;
     }).join('')
-      : `<tr><td colspan="6" class="muted">${ccContests.length ? 'No matching courses.' : 'No courses yet.'}</td></tr>`) + `</tbody>`;
+      : `<tr><td colspan="8" class="muted">${ccContests.length ? 'No matching courses.' : 'No courses yet.'}</td></tr>`) + `</tbody>`;
 
   const from = total ? start + 1 : 0;
   if ($('cc-pager')) {
@@ -414,52 +568,60 @@ async function refreshContestSelectors(collegeId) {
   await loadCollegeContests();
   if (String(collegeId) === String(selectedCollegeId)) await loadDashContests();
   if (String(collegeId) === String($('up-college').value)) await loadUploadContests();
+  if (String(collegeId) === String(dailyCollegeId)) await loadDailyContests();
+  if (String(collegeId) === String(topicsCollegeId)) await loadTopicsContests();
 }
 $('cc-add').addEventListener('click', async () => {
   const id = $('cc-college').value;
   if (!id) return setStatus($('cc-status'), 'Pick a college.', 'err');
-  const name = $('cc-name').value.trim(); const link = $('cc-link').value.trim();
-  if (!name) return setStatus($('cc-status'), 'Enter a course name.', 'err');
+  const course = ($('cc-course')?.value || '').trim();
+  const studyYear = $('cc-year')?.value || 'I Year';
+  const semester = $('cc-sem')?.value || 'Sem 2';
+  const subject = ($('cc-subject')?.value || '').trim();
+  const link = ($('cc-link')?.value || '').trim();
+  const copyFromContestId = $('cc-copy-from')?.value || undefined;
+  if (!course) return setStatus($('cc-status'), 'Enter a Course / Program (e.g. BCA, MCA).', 'err');
+  if (!subject) return setStatus($('cc-status'), 'Enter a Subject (e.g. FOP, OOPS Java, Data Structures).', 'err');
   try {
-    await api('/api/contests', { method: 'POST', body: { collegeId: id, name, contestUrl: link } });
-    $('cc-name').value = ''; $('cc-link').value = '';
-    setStatus($('cc-status'), `Added "${name}".`, 'ok');
-    await refreshContestSelectors(id);
-  } catch (e) { setStatus($('cc-status'), e.message, 'err'); }
-});
-$('cc-bulk-add').addEventListener('click', async () => {
-  const id = $('cc-college').value;
-  if (!id) return setStatus($('cc-status'), 'Pick a college.', 'err');
-  const links = $('cc-bulk').value.split('\n').map((s) => s.trim()).filter(Boolean);
-  if (!links.length) return setStatus($('cc-status'), 'Paste at least one link.', 'err');
-  const existing = (await api('/api/contests?collegeId=' + id)).contests || [];
-  let n = existing.length;
-  try {
-    for (const link of links) { n++; await api('/api/contests', { method: 'POST', body: { collegeId: id, name: 'Course ' + n, contestUrl: link } }); }
-    $('cc-bulk').value = '';
-    setStatus($('cc-status'), `Added ${links.length} course(s).`, 'ok');
+    const r = await api('/api/contests', {
+      method: 'POST',
+      body: { collegeId: id, course, studyYear, semester, subject, contestUrl: link, copyFromContestId },
+    });
+    $('cc-subject').value = ''; $('cc-link').value = '';
+    setStatus($('cc-status'), `Added "${course} · ${studyYear} · ${semester} · ${subject}"${r.copiedStudents ? ` (copied ${r.copiedStudents} students)` : ''}.`, 'ok');
     await refreshContestSelectors(id);
   } catch (e) { setStatus($('cc-status'), e.message, 'err'); }
 });
 $('cc-table').addEventListener('click', async (e) => {
+  const editBtn = e.target.closest('[data-edit-course]');
+  const archBtn = e.target.closest('[data-archive-course]');
   const del = e.target.closest('[data-delcc]');
   const copyBtn = e.target.closest('[data-copy-course-share]');
   const genBtn = e.target.closest('[data-gen-course-share]');
   const expBtn = e.target.closest('[data-export-course]');
 
+  if (editBtn) {
+    const ct = ccContests.find((x) => String(x.id) === String(editBtn.dataset.editCourse));
+    if (ct) openCourseModal({ mode: 'edit', collegeId: $('cc-college').value, contest: ct, contestsList: ccContests });
+  }
+  if (archBtn) {
+    const cid = archBtn.dataset.archiveCourse;
+    const nextArch = archBtn.dataset.archived !== '1';
+    try {
+      await api('/api/contests/' + cid + '/archive', { method: 'PUT', body: { isArchived: nextArch } });
+      setStatus($('cc-status'), nextArch ? 'Course archived (all progress preserved).' : 'Course restored.', 'ok');
+      await refreshContestSelectors($('cc-college').value);
+    } catch (err) { setStatus($('cc-status'), err.message, 'err'); }
+  }
   if (del) {
-    if (!confirm('Delete this course?')) return;
+    if (!confirm('Delete this course entry? (Saved student progress remains safe in DB.)')) return;
     await api('/api/contests/' + del.dataset.delcc, { method: 'DELETE' });
     await refreshContestSelectors($('cc-college').value);
   }
   if (copyBtn) {
     const url = copyBtn.dataset.url;
-    try {
-      await navigator.clipboard.writeText(url);
-      setStatus($('cc-status'), `Copied course link: ${url}`, 'ok');
-    } catch {
-      window.prompt('Copy course link:', url);
-    }
+    try { await navigator.clipboard.writeText(url); setStatus($('cc-status'), `Copied link: ${url}`, 'ok'); }
+    catch { window.prompt('Copy course link:', url); }
   }
   if (genBtn) {
     const id = genBtn.dataset.genCourseShare;
@@ -468,11 +630,9 @@ $('cc-table').addEventListener('click', async (e) => {
       const r = await api('/api/contests/' + id + '/share', { method: 'POST' });
       const url = `${location.origin}/view/${r.token}`;
       await loadCollegeContests();
-      try { await navigator.clipboard.writeText(url); setStatus($('cc-status'), `Created & copied course link: ${url}`, 'ok'); }
-      catch { setStatus($('cc-status'), `Created course link: ${url}`, 'ok'); }
-    } catch (err) {
-      setStatus($('cc-status'), err.message, 'err');
-    }
+      try { await navigator.clipboard.writeText(url); setStatus($('cc-status'), `Created & copied link: ${url}`, 'ok'); }
+      catch { setStatus($('cc-status'), `Created link: ${url}`, 'ok'); }
+    } catch (err) { setStatus($('cc-status'), err.message, 'err'); }
   }
   if (expBtn) {
     exportSingleCourse(expBtn.dataset.exportCourse, expBtn.dataset.courseName);
@@ -582,75 +742,23 @@ async function bulkCopyAllShareLinks() {
   }
 }
 
-async function exportSingleCollege(collegeId, collegeName) {
-  const statusEl = $('c-status');
-  setStatus(statusEl, `Exporting "${collegeName}"…`, 'info');
-  try {
-    const [stRes, ctRes] = await Promise.all([
-      api('/api/students?college=' + encodeURIComponent(collegeName)),
-      api('/api/contests?collegeId=' + collegeId)
-    ]);
-    const wb = XLSX.utils.book_new();
-    const students = stRes.students || [];
-    const rosterRows = [
-      ['Name', 'HackerRank Username', 'Register Number', 'Email', 'Department', 'Section', 'Year', 'Campus']
-    ];
-    for (const s of students) {
-      rosterRows.push([
-        s.name || '', s.hrUsername || '', s.registerNo || '', s.email || '',
-        s.department || '', s.section || '', s.year || '', s.campus || ''
-      ]);
-    }
-    const wsRoster = XLSX.utils.aoa_to_sheet(rosterRows);
-    XLSX.utils.book_append_sheet(wb, wsRoster, 'Student Roster');
-
-    const contests = ctRes.contests || [];
-    const courseRows = [
-      ['Course Name', 'Slug', 'HackerRank URL', 'Share URL']
-    ];
-    for (const ct of contests) {
-      const ctUrl = ct.shareToken ? `${location.origin}/view/${ct.shareToken}` : '';
-      courseRows.push([ct.name, ct.slug || '', ct.contestUrl || '', ctUrl]);
-    }
-    const wsCourses = XLSX.utils.aoa_to_sheet(courseRows);
-    XLSX.utils.book_append_sheet(wb, wsCourses, 'Courses');
-
-    const cleanName = collegeName.replace(/[^a-zA-Z0-9_-]/g, '_');
-    XLSX.writeFile(wb, `${cleanName}_data.xlsx`);
-    setStatus(statusEl, `Exported "${collegeName}" data to Excel.`, 'ok');
-  } catch (e) {
-    setStatus(statusEl, `Export failed: ${e.message}`, 'err');
-  }
+async function exportSingleCollege(collegeId, collegeName, filters = {}, statusOverride = null) {
+  const statusEl = statusOverride || $('c-status');
+  const p = new URLSearchParams();
+  if (filters.course) p.set('course', filters.course);
+  if (filters.studyYear) p.set('studyYear', filters.studyYear);
+  if (filters.semester) p.set('semester', filters.semester);
+  const qs = p.toString() ? `?${p.toString()}` : '';
+  const cleanName = String(collegeName || 'college').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const scope = [filters.course, filters.studyYear, filters.semester].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_-]/g, '_');
+  await downloadAuthExcel(`/api/export/college/${collegeId}${qs}`, `${cleanName}${scope ? '_' + scope : '_All'}_Completion_Report.xlsx`, statusEl);
 }
 
-async function exportSingleCourse(contestId, contestName) {
-  const statusEl = $('cc-status');
-  setStatus(statusEl, `Exporting "${contestName}"…`, 'info');
-  try {
-    const d = await api('/api/contest-dashboard/' + contestId);
-    const dash = d.dashboard;
-    const students = d.students || [];
-    const byUser = new Map((dash?.users || []).map((u) => [u.username.toLowerCase(), u]));
-    const rows = [
-      ['Student Name', 'HackerRank Username', 'Department', 'Section', 'Solved', 'Score', 'Completion %', 'Campus', 'Register No', 'Email']
-    ];
-    const totalQ = dash?.summary?.totalQuestions || 0;
-    for (const s of students) {
-      const u = s.hrUsername ? byUser.get(s.hrUsername.toLowerCase()) : null;
-      const solved = u ? u.solved : 0;
-      const score = u ? u.computedScore : 0;
-      const comp = totalQ ? Math.round((solved / totalQ) * 100) : 0;
-      rows.push([s.name || '', s.hrUsername || '', s.department || '', s.section || '', solved, score, comp, s.campus || '', s.registerNo || '', s.email || '']);
-    }
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Course Results');
-    const cleanName = contestName.replace(/[^a-zA-Z0-9_-]/g, '_');
-    XLSX.writeFile(wb, `${cleanName}_course_data.xlsx`);
-    setStatus(statusEl, `Exported "${contestName}" data to Excel.`, 'ok');
-  } catch (e) {
-    setStatus(statusEl, `Export failed: ${e.message}`, 'err');
-  }
+async function exportSingleCourse(contestId, contestName, filterQuery = '', statusOverride = null) {
+  const statusEl = statusOverride || $('cc-status');
+  const cleanName = String(contestName || 'course').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const qs = filterQuery ? `?${filterQuery}` : '';
+  await downloadAuthExcel(`/api/export/course/${contestId}${qs}`, `${cleanName}_Report.xlsx`, statusEl);
 }
 
 // ---------- Upload roster ----------
@@ -661,7 +769,7 @@ async function loadUploadContests() {
   if (!id) { sel.innerHTML = `<option value="">(no college)</option>`; await loadStudentFacets(); return; }
   const [contestsRes] = await Promise.all([api('/api/contests?collegeId=' + id), loadStudentFacets()]);
   const contests = contestsRes.contests || [];
-  sel.innerHTML = `<option value="">College only (no course)</option>` + contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  sel.innerHTML = `<option value="">College only (no course)</option>` + contests.map((c) => `<option value="${c.id}">${esc(formatContestLabel(c))}</option>`).join('');
 }
 function pickCol(h, kws, exclude = []) {
   const ex = new Set(exclude.filter((i) => i >= 0));
@@ -832,8 +940,43 @@ $('hr-connect-btn').addEventListener('click', async () => {
 
 // ---------- Dashboard ----------
 const collegeName = (id) => { const c = colleges.find((x) => String(x.id) === String(id)); return c ? c.name : ''; };
-$('dash-college').addEventListener('change', async (e) => { selectedCollegeId = e.target.value; selectedContestId = ''; await loadDashContests(); });
+$('dash-college').addEventListener('change', async (e) => {
+  selectedCollegeId = e.target.value; selectedContestId = '';
+  if ($('dash-course')) $('dash-course').value = '';
+  if ($('dash-year')) $('dash-year').value = '';
+  if ($('dash-semester')) $('dash-semester').value = '';
+  await loadDashContests();
+});
+$('dash-course')?.addEventListener('change', () => {
+  $('dash-year').value = ''; $('dash-semester').value = ''; $('dash-contest').value = '';
+  const ct = syncCascade(dashContests, { courseEl: $('dash-course'), yearEl: $('dash-year'), semEl: $('dash-semester'), subjectEl: $('dash-contest') });
+  selectedContestId = ct ? String(ct.id) : '';
+  loadDashboard();
+});
+$('dash-year')?.addEventListener('change', () => {
+  $('dash-semester').value = ''; $('dash-contest').value = '';
+  const ct = syncCascade(dashContests, { courseEl: $('dash-course'), yearEl: $('dash-year'), semEl: $('dash-semester'), subjectEl: $('dash-contest') });
+  selectedContestId = ct ? String(ct.id) : '';
+  loadDashboard();
+});
+$('dash-semester')?.addEventListener('change', () => {
+  $('dash-contest').value = '';
+  const ct = syncCascade(dashContests, { courseEl: $('dash-course'), yearEl: $('dash-year'), semEl: $('dash-semester'), subjectEl: $('dash-contest') });
+  selectedContestId = ct ? String(ct.id) : '';
+  loadDashboard();
+});
 $('dash-contest').addEventListener('change', (e) => { selectedContestId = e.target.value; loadDashboard(); });
+$('dash-toggle-settings')?.addEventListener('click', () => {
+  const box = $('dash-settings-box');
+  if (!box) return;
+  const open = box.classList.toggle('hidden') === false;
+  $('dash-toggle-settings').classList.toggle('active-filter', open);
+});
+$('contest-edit')?.addEventListener('click', () => {
+  if (!selectedContestId) return setStatus($('dash-status'), 'Select a course first.', 'err');
+  const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
+  if (ct) openCourseModal({ mode: 'edit', collegeId: selectedCollegeId, contest: ct, contestsList: dashContests });
+});
 $('sync-btn').addEventListener('click', syncContest);
 $('autosync-btn').addEventListener('click', async () => {
   setStatus($('dash-status'), 'Running auto-sync for all contests… this can take a while.', 'info');
@@ -892,27 +1035,94 @@ $('contest-del').addEventListener('click', delContest);
 ['f-campus', 'f-department', 'f-section', 'f-year'].forEach((id) => $(id).addEventListener('change', () => { studentsPage = 1; renderStudents(); }));
 $('f-search').addEventListener('input', () => { studentsPage = 1; renderStudents(); });
 
-async function loadDashContests() {
+async function loadDashContests(preferId = '') {
   if (!selectedCollegeId) return;
   dashContests = (await api('/api/contests?collegeId=' + selectedCollegeId)).contests || [];
-  const sel = $('dash-contest');
-  sel.innerHTML = dashContests.map((c) => `<option value="${c.id}">${esc(c.name)}${c.slug ? '' : ' (no link)'}</option>`).join('') || `<option value="">No contests</option>`;
-  if (!dashContests.some((c) => String(c.id) === selectedContestId)) selectedContestId = dashContests[0] ? String(dashContests[0].id) : '';
-  sel.value = selectedContestId;
+  const courses = Array.from(new Set(dashContests.map((c) => (c.course || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  if ($('cc-course-list')) $('cc-course-list').innerHTML = courses.map((v) => `<option value="${esc(v)}"></option>`).join('');
+  const ct = syncCascade(dashContests, {
+    courseEl: $('dash-course'), yearEl: $('dash-year'), semEl: $('dash-semester'), subjectEl: $('dash-contest'),
+  }, { preferId: preferId || selectedContestId });
+  selectedContestId = ct ? String(ct.id) : '';
   await loadDashboard();
 }
+
+// ---------- Add / Edit Structured Course Modal ----------
+let courseModalState = null;
+function openCourseModal({ mode = 'add', collegeId, contest = null, contestsList = [] }) {
+  courseModalState = { mode, collegeId, contestId: contest?.id || null };
+  $('cm-title').textContent = mode === 'edit' ? 'Edit Course Details' : 'Add New Course / Subject';
+  $('cm-course').value = contest ? (contest.course || '') : ($('dash-course')?.value || '');
+  $('cm-year').value = contest ? (contest.studyYear || 'I Year') : ($('dash-year')?.value || 'I Year');
+  $('cm-sem').value = contest ? (contest.semester || 'Sem 2') : 'Sem 2';
+  $('cm-subject').value = contest ? (contest.subject || contest.name || '') : '';
+  $('cm-url').value = contest ? (contest.contestUrl || '') : '';
+  setStatus($('cm-status'), '', 'info');
+  if (mode === 'add') {
+    $('cm-copy-row')?.classList.remove('hidden');
+    $('cm-copy-from').innerHTML = `<option value="">(Start empty / upload later)</option>` +
+      contestsList.map((c) => `<option value="${c.id}">${esc(formatContestLabel(c))}</option>`).join('');
+  } else {
+    $('cm-copy-row')?.classList.add('hidden');
+  }
+  $('course-modal').classList.remove('hidden');
+  setTimeout(() => $('cm-course')?.focus(), 40);
+}
+$('cm-close')?.addEventListener('click', () => $('course-modal').classList.add('hidden'));
+$('cm-cancel')?.addEventListener('click', () => $('course-modal').classList.add('hidden'));
+$('course-modal')?.addEventListener('click', (e) => { if (e.target.id === 'course-modal') $('course-modal').classList.add('hidden'); });
+$('cm-save')?.addEventListener('click', async () => {
+  if (!courseModalState) return;
+  const { mode, collegeId, contestId } = courseModalState;
+  const course = $('cm-course').value.trim();
+  const studyYear = $('cm-year').value;
+  const semester = $('cm-sem').value;
+  const subject = $('cm-subject').value.trim();
+  const contestUrl = $('cm-url').value.trim();
+  if (!course) return setStatus($('cm-status'), 'Enter a Course / Program (e.g. BCA, MCA).', 'err');
+  if (!subject) return setStatus($('cm-status'), 'Enter a Subject (e.g. FOP, OOPS Java, Data Structures).', 'err');
+  setStatus($('cm-status'), 'Saving…', 'info');
+  try {
+    if (mode === 'add') {
+      const copyFromContestId = $('cm-copy-from')?.value || undefined;
+      const r = await api('/api/contests', {
+        method: 'POST',
+        body: { collegeId, course, studyYear, semester, subject, contestUrl, copyFromContestId },
+      });
+      $('course-modal').classList.add('hidden');
+      selectedContestId = String(r.contest.id);
+      await refreshContestSelectors(collegeId);
+      setStatus($('dash-status'), `Added "${formatContestLabel(r.contest)}"${r.copiedStudents ? ` (copied ${r.copiedStudents} students)` : ''}.`, 'ok');
+    } else {
+      const doPut = async (force = false) => api('/api/contests/' + contestId, {
+        method: 'PUT',
+        body: { course, studyYear, semester, subject, contestUrl, force },
+      });
+      try {
+        await doPut(false);
+      } catch (err) {
+        if (err.status === 409 && err.code === 'PROGRESS_EXISTS') {
+          if (!confirm(`${err.message}\n\nClick Cancel to keep old progress safe. Click OK ONLY if fixing a typo.`)) return setStatus($('cm-status'), 'Cancelled.', 'info');
+          await doPut(true);
+        } else throw err;
+      }
+      $('course-modal').classList.add('hidden');
+      clearDashCache(contestId);
+      await refreshContestSelectors(collegeId);
+      setStatus($('dash-status'), 'Course details updated.', 'ok');
+    }
+  } catch (e) { setStatus($('cm-status'), e.message, 'err'); }
+});
+
 async function addContest() {
   if (!selectedCollegeId) return setStatus($('dash-status'), 'Pick a college first.', 'err');
-  const name = prompt('Course name (e.g. Round 1):'); if (!name) return;
-  const contestUrl = prompt('HackerRank course link:') || '';
-  try { const r = await api('/api/contests', { method: 'POST', body: { collegeId: selectedCollegeId, name, contestUrl } }); selectedContestId = String(r.contest.id); await loadDashContests(); setStatus($('dash-status'), `Added "${name}". Connect HackerRank and Sync it.`, 'ok'); }
-  catch (e) { setStatus($('dash-status'), e.message, 'err'); }
+  openCourseModal({ mode: 'add', collegeId: selectedCollegeId, contestsList: dashContests });
 }
 async function delContest() {
   if (!selectedContestId) return;
-  if (!confirm('Delete this course?')) return;
+  if (!confirm('Delete this course entry? (Tip: use 📦 Archive in Colleges tab to keep old courses visible in reports. Saved student progress stays safe in DB.)')) return;
   await api('/api/contests/' + selectedContestId, { method: 'DELETE' });
-  selectedContestId = ''; await loadDashContests();
+  selectedContestId = ''; await refreshContestSelectors(selectedCollegeId);
 }
 
 function showContestLink() {
@@ -921,8 +1131,7 @@ function showContestLink() {
 }
 $('dash-savelink').addEventListener('click', async () => {
   if (!selectedContestId) return setStatus($('dash-status'), 'Select a course first.', 'err');
-  try { await api('/api/contests/' + selectedContestId, { method: 'PUT', body: { contestUrl: $('dash-contest-url').value.trim() } }); setStatus($('dash-status'), 'Course link saved. Sync it now.', 'ok'); await loadDashContests(); }
-  catch (e) { setStatus($('dash-status'), e.message, 'err'); }
+  await saveContestLinkWithGuard(selectedContestId, $('dash-contest-url').value.trim(), $('dash-status'), () => loadDashContests(selectedContestId));
 });
 
 // Browser-side cache of contest dashboards so switching back is instant.
@@ -1273,13 +1482,13 @@ function renderStudents() {
   const start = (studentsPage - 1) * STUDENTS_PAGE;
   const rows = all.slice(start, start + STUDENTS_PAGE);
   $('students-table').innerHTML =
-    `<thead><tr><th><input type="checkbox" id="sel-all"/></th><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th>` +
+    `<thead><tr><th class="col-chk"><input type="checkbox" id="sel-all"/></th><th class="col-idx">#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th>` +
     (hasScrape ? `<th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th>` : '') +
-    `<th style="width:48px;text-align:center">Edit</th></tr></thead><tbody>` +
+    `<th class="col-edit">Edit</th></tr></thead><tbody>` +
     (rows.length ? rows.map((r, idx) =>
-      `<tr><td><input type="checkbox" class="sel" value="${r.id}"/></td><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td>` +
-      (hasScrape ? `<td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td>` : '') +
-      `<td style="text-align:center"><button class="ghost sm edit-student-btn" data-edit-student="${r.id}" title="Edit student details" style="padding:2px 7px;font-size:.85rem;cursor:pointer">✏️</button></td></tr>`).join('')
+      `<tr><td class="col-chk"><input type="checkbox" class="sel" value="${r.id}"/></td><td class="col-idx">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="badge none" style="margin-left:6px">absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td>` +
+      (hasScrape ? `<td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="comp-wrap"><div class="bar"><span style="width:${r.completion}%"></span></div><span class="comp-pct">${r.completion}%</span></div></td>` : '') +
+      `<td class="col-edit"><button class="ghost xs edit-student-btn" data-edit-student="${r.id}" title="Edit student details">✏️</button></td></tr>`).join('')
       : `<tr><td colspan="${hasScrape ? 10 : 7}" class="muted">No students. Upload a roster (Upload tab).</td></tr>`) + `</tbody>`;
   const selAll = $('sel-all'); if (selAll) selAll.addEventListener('change', () => document.querySelectorAll('#students-table .sel').forEach((c) => (c.checked = selAll.checked)));
   const from = all.length ? start + 1 : 0;
@@ -1393,28 +1602,63 @@ $('del-btn').addEventListener('click', async () => {
   await loadDashboard();
 });
 $('export-btn').addEventListener('click', () => {
-  const rows = filteredRows();
-  const aoa = [['Name', 'HR Username', 'Register No', 'Email', 'Department', 'Section', 'Year', 'Campus', 'Solved', 'Score', 'Completion %']];
-  for (const r of rows) aoa.push([r.name, r.hrUsername, r.registerNo, r.email, r.department, r.section, r.year, r.campus, r.solved, r.score, r.completion]);
-  const ws = XLSX.utils.aoa_to_sheet(aoa); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Students'); XLSX.writeFile(wb, 'students.xlsx');
+  if (!selectedContestId) return setStatus($('dash-status'), 'Select a course first.', 'err');
+  const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
+  const params = new URLSearchParams();
+  if ($('f-campus')?.value) params.set('campus', $('f-campus').value);
+  if ($('f-department')?.value) params.set('department', $('f-department').value);
+  if ($('f-section')?.value) params.set('section', $('f-section').value);
+  if ($('f-year')?.value) params.set('year', $('f-year').value);
+  if ($('f-search')?.value.trim()) params.set('q', $('f-search').value.trim());
+  exportSingleCourse(selectedContestId, formatContestLabel(ct) || 'course', params.toString(), $('dash-status'));
+});
+$('export-college-btn')?.addEventListener('click', () => {
+  if (!selectedCollegeId) return setStatus($('dash-status'), 'Select a college first.', 'err');
+  const colName = collegeName(selectedCollegeId) || 'college';
+  exportSingleCollege(selectedCollegeId, colName, {
+    course: $('dash-course')?.value || '',
+    studyYear: $('dash-year')?.value || '',
+    semester: $('dash-semester')?.value || '',
+  }, $('dash-status'));
 });
 
 // ---------- Daily tab ----------
-let dailyCollegeId = '', dailyContestId = '';
+let dailyCollegeId = '', dailyContestId = '', dailyContests = [];
 let dailyPage = 1;
 const DAILY_PAGE = 30;
 
 document.querySelectorAll('#tabs .tab').forEach((b) => { if (b.dataset.tab === 'daily') b.addEventListener('click', initDailyTab); });
 function initDailyTab() { fillCollegeSelect($('daily-college')); if (!dailyCollegeId && colleges[0]) dailyCollegeId = String(colleges[0].id); $('daily-college').value = dailyCollegeId; loadDailyContests(); }
-$('daily-college').addEventListener('change', (e) => { dailyCollegeId = e.target.value; dailyContestId = ''; dailyPage = 1; loadDailyContests(); });
+$('daily-college').addEventListener('change', (e) => {
+  dailyCollegeId = e.target.value; dailyContestId = ''; dailyPage = 1;
+  if ($('daily-course')) $('daily-course').value = '';
+  if ($('daily-year')) $('daily-year').value = '';
+  if ($('daily-semester')) $('daily-semester').value = '';
+  loadDailyContests();
+});
+$('daily-course')?.addEventListener('change', () => {
+  $('daily-year').value = ''; $('daily-semester').value = ''; $('daily-contest').value = '';
+  const ct = syncCascade(dailyContests, { courseEl: $('daily-course'), yearEl: $('daily-year'), semEl: $('daily-semester'), subjectEl: $('daily-contest') });
+  dailyContestId = ct ? String(ct.id) : ''; dailyPage = 1; renderDaily();
+});
+$('daily-year')?.addEventListener('change', () => {
+  $('daily-semester').value = ''; $('daily-contest').value = '';
+  const ct = syncCascade(dailyContests, { courseEl: $('daily-course'), yearEl: $('daily-year'), semEl: $('daily-semester'), subjectEl: $('daily-contest') });
+  dailyContestId = ct ? String(ct.id) : ''; dailyPage = 1; renderDaily();
+});
+$('daily-semester')?.addEventListener('change', () => {
+  $('daily-contest').value = '';
+  const ct = syncCascade(dailyContests, { courseEl: $('daily-course'), yearEl: $('daily-year'), semEl: $('daily-semester'), subjectEl: $('daily-contest') });
+  dailyContestId = ct ? String(ct.id) : ''; dailyPage = 1; renderDaily();
+});
 $('daily-contest').addEventListener('change', (e) => { dailyContestId = e.target.value; dailyPage = 1; renderDaily(); });
 async function loadDailyContests() {
   if (!dailyCollegeId) return;
-  const contests = (await api('/api/contests?collegeId=' + dailyCollegeId)).contests || [];
-  const sel = $('daily-contest');
-  sel.innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('') || `<option value="">No contests</option>`;
-  if (!contests.some((c) => String(c.id) === dailyContestId)) dailyContestId = contests[0] ? String(contests[0].id) : '';
-  sel.value = dailyContestId;
+  dailyContests = (await api('/api/contests?collegeId=' + dailyCollegeId)).contests || [];
+  const ct = syncCascade(dailyContests, {
+    courseEl: $('daily-course'), yearEl: $('daily-year'), semEl: $('daily-semester'), subjectEl: $('daily-contest'),
+  }, { preferId: dailyContestId });
+  dailyContestId = ct ? String(ct.id) : '';
   dailyPage = 1;
   renderDaily();
 }
@@ -1693,15 +1937,36 @@ $('daily-modal-table')?.addEventListener('click', (e) => {
 let topicsCollegeId = '', topicsContestId = '', topicsContests = [];
 document.querySelectorAll('#tabs .tab').forEach((b) => { if (b.dataset.tab === 'topics') b.addEventListener('click', initTopicsTab); });
 function initTopicsTab() { fillCollegeSelect($('t-college')); if (!topicsCollegeId && colleges[0]) topicsCollegeId = String(colleges[0].id); $('t-college').value = topicsCollegeId; loadTopicsContests(); }
-$('t-college').addEventListener('change', (e) => { topicsCollegeId = e.target.value; topicsContestId = ''; loadTopicsContests(); });
+$('t-college').addEventListener('change', (e) => {
+  topicsCollegeId = e.target.value; topicsContestId = '';
+  if ($('t-course')) $('t-course').value = '';
+  if ($('t-year')) $('t-year').value = '';
+  if ($('t-semester')) $('t-semester').value = '';
+  loadTopicsContests();
+});
+$('t-course')?.addEventListener('change', () => {
+  $('t-year').value = ''; $('t-semester').value = ''; $('t-contest-sel').value = '';
+  const ct = syncCascade(topicsContests, { courseEl: $('t-course'), yearEl: $('t-year'), semEl: $('t-semester'), subjectEl: $('t-contest-sel') });
+  topicsContestId = ct ? String(ct.id) : ''; loadTopicsEditor();
+});
+$('t-year')?.addEventListener('change', () => {
+  $('t-semester').value = ''; $('t-contest-sel').value = '';
+  const ct = syncCascade(topicsContests, { courseEl: $('t-course'), yearEl: $('t-year'), semEl: $('t-semester'), subjectEl: $('t-contest-sel') });
+  topicsContestId = ct ? String(ct.id) : ''; loadTopicsEditor();
+});
+$('t-semester')?.addEventListener('change', () => {
+  $('t-contest-sel').value = '';
+  const ct = syncCascade(topicsContests, { courseEl: $('t-course'), yearEl: $('t-year'), semEl: $('t-semester'), subjectEl: $('t-contest-sel') });
+  topicsContestId = ct ? String(ct.id) : ''; loadTopicsEditor();
+});
 $('t-contest-sel').addEventListener('change', (e) => { topicsContestId = e.target.value; loadTopicsEditor(); });
 async function loadTopicsContests() {
   if (!topicsCollegeId) return;
   topicsContests = (await api('/api/contests?collegeId=' + topicsCollegeId)).contests || [];
-  const sel = $('t-contest-sel');
-  sel.innerHTML = topicsContests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('') || `<option value="">No contests</option>`;
-  if (!topicsContests.some((c) => String(c.id) === topicsContestId)) topicsContestId = topicsContests[0] ? String(topicsContests[0].id) : '';
-  sel.value = topicsContestId;
+  const ct = syncCascade(topicsContests, {
+    courseEl: $('t-course'), yearEl: $('t-year'), semEl: $('t-semester'), subjectEl: $('t-contest-sel'),
+  }, { preferId: topicsContestId });
+  topicsContestId = ct ? String(ct.id) : '';
   loadTopicsEditor();
 }
 async function loadTopicsEditor() {
@@ -1754,11 +2019,7 @@ $('tv-save').addEventListener('click', async () => {
 });
 $('t-savelink').addEventListener('click', async () => {
   if (!topicsContestId) return;
-  try {
-    await api('/api/contests/' + topicsContestId, { method: 'PUT', body: { contestUrl: $('t-contest').value.trim() } });
-    setStatus($('t-status'), 'Course link saved. Now sync it in the Dashboard tab.', 'ok');
-    await loadTopicsContests();
-  } catch (e) { setStatus($('t-status'), e.message, 'err'); }
+  await saveContestLinkWithGuard(topicsContestId, $('t-contest').value.trim(), $('t-status'), loadTopicsContests);
 });
 $('t-autofill').addEventListener('click', () => document.querySelectorAll('#topics-table .topic-in').forEach((inp) => { if (!inp.value.trim() && inp.dataset.sug) inp.value = inp.dataset.sug; }));
 $('t-save').addEventListener('click', async () => {
@@ -1788,8 +2049,17 @@ document.getElementById('students-table').addEventListener('click', (e) => {
   if (link) { e.preventDefault(); openPerf(link.dataset.user); }
 });
 $('perf-close').addEventListener('click', () => $('perf-modal').classList.add('hidden'));
+$('perf-export-btn')?.addEventListener('click', async () => {
+  const btn = $('perf-export-btn');
+  const sid = btn?.dataset.studentId;
+  if (!sid) return;
+  const clean = (btn.dataset.studentName || 'student').replace(/[^a-zA-Z0-9_-]/g, '_');
+  btn.disabled = true; btn.textContent = 'Exporting…';
+  await downloadAuthExcel(`/api/export/student/${sid}`, `${clean}_Progress_Report.xlsx`, $('dash-status'));
+  btn.disabled = false; btn.textContent = '⬇ Export Excel';
+});
 $('perf-modal').addEventListener('click', (e) => { if (e.target.id === 'perf-modal') $('perf-modal').classList.add('hidden'); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('perf-modal').classList.add('hidden'); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay').forEach((m) => m.classList.add('hidden')); });
 
 async function openPerf(hrUsername, optContestId) {
   if (!hrUsername) return;
@@ -1816,6 +2086,11 @@ async function openPerf(hrUsername, optContestId) {
 
   const u = dData?.users?.find((x) => x.username && x.username.toLowerCase() === username.toLowerCase());
 
+  const expBtn = $('perf-export-btn');
+  if (expBtn) {
+    if (r.id) { expBtn.dataset.studentId = r.id; expBtn.dataset.studentName = r.name || username; expBtn.classList.remove('hidden'); }
+    else expBtn.classList.add('hidden');
+  }
   $('perf-title').textContent = r.name || username;
   $('perf-meta').innerHTML = [
     `@${esc(username)}`,

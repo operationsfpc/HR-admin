@@ -12,9 +12,80 @@ function splitTitle(name) { const m = String(name).split(/\s+[–—-]\s+/); ret
 let dashData = null, dashTopics = {}, dashCats = {}, roster = [], dailyData = null, collegeFacets = { departments: [], sections: [], years: [], campuses: [] };
 let studentsPage = 1; const STUDENTS_PAGE = 50;
 let currentContestId = '';
+let currentCollegeName = '';
+let currentContestObj = null;
+let collegeContests = [];
 let taRows = [];
 let compDist = [], compTotal = 0, compTotalQ = 0, compMax = 1, compPage = 1; const COMP_PAGE = 20;
 let cbRows = [], cbPage = 1; const CB_PAGE = 20;
+
+const YEAR_ORDER = { 'I Year': 1, 'II Year': 2, 'III Year': 3, 'IV Year': 4, 'General': 99 };
+const SEM_ORDER = { 'Sem 1': 1, 'Sem 2': 2, 'Sem 3': 3, 'Sem 4': 4, 'Sem 5': 5, 'Sem 6': 6, 'Sem 7': 7, 'Sem 8': 8, 'General': 99 };
+const SUBJ_ORDER = { 'FOP': 1, 'OOPS Java': 2, 'OOPS': 2, 'Data Structures': 3, 'Algorithms': 4 };
+const sortYear = (a, b) => (YEAR_ORDER[a] || 50) - (YEAR_ORDER[b] || 50) || a.localeCompare(b, undefined, { numeric: true });
+const sortSem = (a, b) => (SEM_ORDER[a] || 50) - (SEM_ORDER[b] || 50) || a.localeCompare(b, undefined, { numeric: true });
+const sortSubj = (a, b) => (SUBJ_ORDER[a] || 50) - (SUBJ_ORDER[b] || 50) || a.localeCompare(b, undefined, { numeric: true });
+
+function contestLabel(c) {
+  if (!c) return '';
+  const parts = [c.subject || c.name, c.course, c.studyYear, c.semester].filter(Boolean);
+  return parts.length ? parts.join(' · ') : (c.name || '');
+}
+
+async function downloadReadOnlyExcel(url, fallbackName, btn = null) {
+  const stat = $('view-status');
+  const prevText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+  if (stat) { stat.textContent = 'Generating formatted Excel report…'; stat.className = 'status info'; }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Export failed (${res.status})`); }
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = cd.match(/filename="?([^"]+)"?/i);
+    const filename = (m && m[1]) || (fallbackName.endsWith('.xlsx') ? fallbackName : `${fallbackName}.xlsx`);
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = objUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+    if (stat) { stat.textContent = `Downloaded ${filename}`; stat.className = 'status ok'; }
+  } catch (e) {
+    if (stat) { stat.textContent = `Export failed: ${e.message}`; stat.className = 'status err'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prevText; }
+  }
+}
+
+function syncViewCascade(preferId = '') {
+  const courseEl = $('view-course'), yearEl = $('view-year'), semEl = $('view-sem'), subjEl = $('view-contest');
+  if (!collegeContests.length || !courseEl || !yearEl || !semEl || !subjEl) return null;
+  const pref = preferId ? collegeContests.find((c) => String(c.id) === String(preferId)) : null;
+
+  const courses = Array.from(new Set(collegeContests.map((c) => (c.course || 'General').trim()))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const prevCourse = pref ? (pref.course || 'General') : courseEl.value;
+  courseEl.innerHTML = courses.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  courseEl.value = courses.includes(prevCourse) ? prevCourse : courses[0];
+
+  const byCourse = collegeContests.filter((c) => (c.course || 'General').trim() === courseEl.value);
+  const years = Array.from(new Set(byCourse.map((c) => (c.studyYear || 'General').trim()))).sort(sortYear);
+  const prevYear = pref ? (pref.studyYear || 'General') : yearEl.value;
+  yearEl.innerHTML = years.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  yearEl.value = years.includes(prevYear) ? prevYear : years[0];
+
+  const byYear = byCourse.filter((c) => (c.studyYear || 'General').trim() === yearEl.value);
+  const sems = Array.from(new Set(byYear.map((c) => (c.semester || 'General').trim()))).sort(sortSem);
+  const prevSem = pref ? (pref.semester || 'General') : semEl.value;
+  semEl.innerHTML = sems.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  semEl.value = sems.includes(prevSem) ? prevSem : sems[0];
+
+  const bySem = byYear.filter((c) => (c.semester || 'General').trim() === semEl.value)
+    .sort((a, b) => sortSubj(a.subject || a.name || '', b.subject || b.name || ''));
+  const prevSubj = pref ? String(pref.id) : subjEl.value;
+  subjEl.innerHTML = bySem.map((c) => `<option value="${c.id}">${esc(c.subject || c.name)}${c.isArchived ? ' [Archived]' : ''}${c.hasLink ? '' : ' (no link)'}</option>`).join('');
+  subjEl.value = bySem.some((c) => String(c.id) === String(prevSubj)) ? prevSubj : String(bySem[0].id);
+
+  return bySem.find((c) => String(c.id) === String(subjEl.value)) || bySem[0] || null;
+}
 
 // Show only the tabs the admin enabled for shared links; activate the first visible one.
 function applyTabs(tabs) {
@@ -33,11 +104,15 @@ function applyPayload(d) {
   if (d.tabs) applyTabs(d.tabs);
   dashData = d.dashboard; dashTopics = d.topics || {}; dashCats = d.categories || {}; roster = d.roster || []; dailyData = d.daily || null;
   if (d.facets) collegeFacets = d.facets;
-  $('view-title').textContent = isCollege ? `${d.college}` : `${d.contest.name} — ${d.college}`;
-  document.title = isCollege ? `${d.college} · ${d.contest.name}` : `${d.contest.name} · ${d.college}`;
+  currentCollegeName = d.college || currentCollegeName;
+  currentContestObj = d.contest || null;
+  if (d.contest?.id) currentContestId = String(d.contest.id);
+  const cLbl = contestLabel(d.contest);
+  $('view-title').textContent = isCollege ? `${d.college}` : `${cLbl} — ${d.college}`;
+  document.title = isCollege ? `${d.college} · ${cLbl}` : `${cLbl} · ${d.college}`;
   studentsPage = 1;
   if (!dashData) {
-    $('view-status').textContent = `"${d.contest.name}" has not been synced yet.`; $('view-status').className = 'status info';
+    $('view-status').textContent = `"${cLbl}" has not been synced yet.`; $('view-status').className = 'status info';
     ['summary', 'topic-analysis-card', 'completion-card', 'category-card', 'topic-cat-card'].forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
     $('students-table').innerHTML = ''; renderDaily();
     return;
@@ -52,14 +127,25 @@ async function boot() {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Not found');
       applyTabs(d.tabs);
+      currentCollegeName = d.college;
       $('view-title').textContent = d.college; document.title = d.college;
-      const contests = d.contests || [];
-      if (!contests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
-      if (contests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
-      const sel = $('view-contest'); $('view-contest-wrap').classList.remove('hidden');
-      sel.innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}${c.hasLink ? '' : ' (no link)'}</option>`).join('');
-      sel.onchange = () => loadCollegeContest(sel.value);
-      await loadCollegeContest(contests[0].id);
+      collegeContests = d.contests || [];
+      if ($('view-export-college-btn')) $('view-export-college-btn').classList.remove('hidden');
+      if (!collegeContests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
+      if (collegeContests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
+      $('view-cascade')?.classList.remove('hidden');
+
+      const onCascadeChange = () => {
+        const picked = syncViewCascade();
+        if (picked) loadCollegeContest(picked.id);
+      };
+      $('view-course').onchange = () => { $('view-year').value = ''; $('view-sem').value = ''; $('view-contest').value = ''; onCascadeChange(); };
+      $('view-year').onchange = () => { $('view-sem').value = ''; $('view-contest').value = ''; onCascadeChange(); };
+      $('view-sem').onchange = () => { $('view-contest').value = ''; onCascadeChange(); };
+      $('view-contest').onchange = () => { if ($('view-contest').value) loadCollegeContest($('view-contest').value); };
+
+      const first = syncViewCascade();
+      if (first) await loadCollegeContest(first.id);
     } else {
       const res = await fetch('/api/shared/' + token);
       const d = await res.json();
@@ -78,6 +164,25 @@ async function loadCollegeContest(contestId) {
     applyPayload(d);
   } catch (e) { $('view-status').textContent = e.message; $('view-status').className = 'status err'; }
 }
+
+// ---------------- Read-only Excel exports ----------------
+$('view-export-btn')?.addEventListener('click', () => {
+  const params = new URLSearchParams();
+  if ($('f-campus')?.value) params.set('campus', $('f-campus').value);
+  if ($('f-department')?.value) params.set('department', $('f-department').value);
+  if ($('f-section')?.value) params.set('section', $('f-section').value);
+  if ($('f-year')?.value) params.set('year', $('f-year').value);
+  if ($('f-search')?.value.trim()) params.set('q', $('f-search').value.trim());
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const url = isCollege ? `/api/college/${token}/export/course/${currentContestId}${qs}` : `/api/shared/${token}/export${qs}`;
+  const clean = `${currentCollegeName || 'report'}_${contestLabel(currentContestObj) || 'course'}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+  downloadReadOnlyExcel(url, `${clean}_Report.xlsx`, $('view-export-btn'));
+});
+$('view-export-college-btn')?.addEventListener('click', () => {
+  if (!isCollege) return;
+  const clean = (currentCollegeName || 'college').replace(/[^a-zA-Z0-9_-]/g, '_');
+  downloadReadOnlyExcel(`/api/college/${token}/export/college`, `${clean}_Completion_Report.xlsx`, $('view-export-college-btn'));
+});
 
 // ---------------- Read-only sync ----------------
 function syncReadDashboard(syncAll = false) {
@@ -396,9 +501,9 @@ function renderStudents() {
   if (studentsPage > pages) studentsPage = pages;
   const start = (studentsPage - 1) * STUDENTS_PAGE, rows = all.slice(start, start + STUDENTS_PAGE);
   $('students-table').innerHTML =
-    `<thead><tr><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th><th style="width:48px;text-align:center">Edit</th></tr></thead><tbody>` +
+    `<thead><tr><th class="col-idx">#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th><th class="col-edit">Edit</th></tr></thead><tbody>` +
     (rows.length ? rows.map((r, idx) =>
-      `<tr><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td><td style="text-align:center"><button class="ghost sm edit-student-btn" data-edit-student="${r.id}" title="Check & Update student details" style="padding:2px 7px;font-size:.85rem;cursor:pointer">✏️</button></td></tr>`).join('')
+      `<tr><td class="col-idx">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="badge none" style="margin-left:6px">absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="comp-wrap"><div class="bar"><span style="width:${r.completion}%"></span></div><span class="comp-pct">${r.completion}%</span></div></td><td class="col-edit"><button class="ghost xs edit-student-btn" data-edit-student="${r.id}" title="Check & Update student details">✏️</button></td></tr>`).join('')
       : `<tr><td colspan="9" class="muted">No students.</td></tr>`) + `</tbody>`;
   const from = all.length ? start + 1 : 0;
   $('students-pager').innerHTML = all.length > STUDENTS_PAGE ? `<button class="ghost sm" id="st-prev" ${studentsPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + STUDENTS_PAGE, all.length)} of ${all.length} · page ${studentsPage}/${pages}</span><button class="ghost sm" id="st-next" ${studentsPage >= pages ? 'disabled' : ''}>Next ›</button>` : '';
@@ -892,6 +997,14 @@ $('students-table').addEventListener('click', (e) => {
 
 // ---- Performance modal ----
 $('perf-close').addEventListener('click', () => $('perf-modal').classList.add('hidden'));
+$('perf-export-btn')?.addEventListener('click', () => {
+  const btn = $('perf-export-btn');
+  const sid = btn?.dataset.studentId;
+  if (!sid) return;
+  const clean = (btn.dataset.studentName || 'student').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const url = isCollege ? `/api/college/${token}/export/student/${sid}` : `/api/shared/${token}/export/student/${sid}`;
+  downloadReadOnlyExcel(url, `${clean}_Progress_Report.xlsx`, btn);
+});
 $('perf-modal').addEventListener('click', (e) => { if (e.target.id === 'perf-modal') $('perf-modal').classList.add('hidden'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay').forEach((m) => m.classList.add('hidden')); });
 function openPerf(hrUsername) {
@@ -903,6 +1016,11 @@ function openPerf(hrUsername) {
             { name: username, hrUsername: username };
   const u = dashData?.users?.find((x) => x.username && x.username.toLowerCase() === username.toLowerCase());
 
+  const expBtn = $('perf-export-btn');
+  if (expBtn) {
+    if (r.id) { expBtn.dataset.studentId = r.id; expBtn.dataset.studentName = r.name || username; expBtn.classList.remove('hidden'); }
+    else expBtn.classList.add('hidden');
+  }
   $('perf-title').textContent = r.name || username;
   $('perf-meta').innerHTML = [
     `@${esc(username)}`,
