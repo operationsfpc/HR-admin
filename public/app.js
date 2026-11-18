@@ -67,10 +67,31 @@ async function downloadAuthExcel(url, fallbackName, statusEl) {
 // ---------- Semester & Contest Selector Helpers ----------
 const DEFAULT_SEMESTERS = ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4', 'Sem 5', 'Sem 6', 'Sem 7', 'Sem 8'];
 
+function semFromLinkLabel(label) {
+  const m = String(label || '').trim().match(/^(Sem\s*\d+)/i);
+  return m ? ('Sem ' + m[1].replace(/\D+/g, '')) : '';
+}
+
+function contestSemesters(c) {
+  const out = new Set();
+  const base = (c?.semester || '').trim();
+  if (base) out.add(base);
+  for (const l of (c?.links || [])) {
+    const ls = semFromLinkLabel(l.label);
+    if (ls) out.add(ls);
+  }
+  return out;
+}
+
 function distinctSemesters(contests) {
-  const sems = Array.from(new Set((contests || []).map((c) => (c.semester || '').trim()).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const hasUnassigned = (contests || []).some((c) => !(c.semester || '').trim());
+  const semsSet = new Set();
+  let hasUnassigned = false;
+  for (const c of (contests || [])) {
+    const cs = contestSemesters(c);
+    if (!cs.size) hasUnassigned = true;
+    else for (const s of cs) semsSet.add(s);
+  }
+  const sems = Array.from(semsSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   return { sems, hasUnassigned };
 }
 
@@ -89,14 +110,30 @@ function fillSemesterSelect(sel, contests) {
 
 function filterBySemester(contests, semVal) {
   if (!semVal) return contests || [];
-  if (semVal === '__unassigned__') return (contests || []).filter((c) => !(c.semester || '').trim());
-  return (contests || []).filter((c) => (c.semester || '').trim() === semVal);
+  if (semVal === '__unassigned__') return (contests || []).filter((c) => contestSemesters(c).size === 0);
+  return (contests || []).filter((c) => contestSemesters(c).has(semVal));
 }
 
-function fillGroupedContestSelect(sel, contests, { emptyText = 'No contests', includeNoLink = false, prefixOptionHtml = '' } = {}) {
+function preferredLinkForSemester(ct, semVal) {
+  if (!ct || !semVal || semVal === '__unassigned__') return '';
+  const links = Array.isArray(ct.links) ? ct.links : [];
+  const hit = links.find((l) => semFromLinkLabel(l.label) === semVal);
+  return hit ? String(hit.id) : '';
+}
+
+function fillGroupedContestSelect(sel, contests, { emptyText = 'No contests', includeNoLink = false, prefixOptionHtml = '', activeSemester = '' } = {}) {
   if (!sel) return;
   if (!contests.length) {
     sel.innerHTML = prefixOptionHtml || `<option value="">${esc(emptyText)}</option>`;
+    return;
+  }
+  const optHtml = (c) => {
+    const suffix = `${c.isArchived ? ' [Archived]' : ''}${includeNoLink && !c.slug ? ' (no link)' : ''}`;
+    return `<option value="${c.id}">${esc(c.name)}${suffix}</option>`;
+  };
+  // When filtered to a single semester, show clean flat options without misleading optgroup headers.
+  if (activeSemester) {
+    sel.innerHTML = prefixOptionHtml + contests.map(optHtml).join('');
     return;
   }
   const groups = new Map();
@@ -106,10 +143,6 @@ function fillGroupedContestSelect(sel, contests, { emptyText = 'No contests', in
     groups.get(key).push(c);
   }
   const useGroups = groups.size > 1 || !groups.has('Unassigned');
-  const optHtml = (c) => {
-    const suffix = `${c.isArchived ? ' [Archived]' : ''}${includeNoLink && !c.slug ? ' (no link)' : ''}`;
-    return `<option value="${c.id}">${esc(c.name)}${suffix}</option>`;
-  };
   let body = '';
   if (useGroups) {
     const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
@@ -1061,7 +1094,13 @@ $('hr-connect-btn').addEventListener('click', async () => {
 // ---------- Dashboard ----------
 const collegeName = (id) => { const c = colleges.find((x) => String(x.id) === String(id)); return c ? c.name : ''; };
 $('dash-college').addEventListener('change', async (e) => { selectedCollegeId = e.target.value; selectedContestId = ''; await loadDashContests(); });
-$('dash-contest').addEventListener('change', (e) => { selectedContestId = e.target.value; selectedLinkId = ''; loadDashboard(); });
+$('dash-contest').addEventListener('change', (e) => {
+  selectedContestId = e.target.value;
+  const semVal = $('dash-semester')?.value || '';
+  const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
+  selectedLinkId = preferredLinkForSemester(ct, semVal) || '';
+  loadDashboard();
+});
 $('dash-link')?.addEventListener('change', (e) => { selectedLinkId = e.target.value; loadDashboard(); });
 $('sync-btn').addEventListener('click', syncContest);
 $('autosync-btn').addEventListener('click', async () => {
@@ -1121,16 +1160,21 @@ $('contest-del').addEventListener('click', delContest);
 ['f-campus', 'f-department', 'f-section', 'f-year'].forEach((id) => $(id).addEventListener('change', () => { studentsPage = 1; renderStudents(); }));
 $('f-search').addEventListener('input', () => { studentsPage = 1; renderStudents(); });
 
-$('dash-semester')?.addEventListener('change', () => { renderDashContestOptions(); loadDashboard(); });
+$('dash-semester')?.addEventListener('change', () => { selectedLinkId = ''; renderDashContestOptions(); loadDashboard(); });
 function renderDashContestOptions() {
   const semVal = $('dash-semester')?.value || '';
   const filtered = filterBySemester(dashContests, semVal);
   const sel = $('dash-contest');
-  fillGroupedContestSelect(sel, filtered, { emptyText: 'No courses in this semester', includeNoLink: true });
+  fillGroupedContestSelect(sel, filtered, { emptyText: 'No courses in this semester', includeNoLink: true, activeSemester: semVal });
   if (!filtered.some((c) => String(c.id) === String(selectedContestId))) {
     selectedContestId = filtered[0] ? String(filtered[0].id) : '';
   }
   sel.value = selectedContestId;
+  const activeCt = filtered.find((c) => String(c.id) === String(selectedContestId));
+  if (activeCt && semVal) {
+    const pref = preferredLinkForSemester(activeCt, semVal);
+    if (pref) selectedLinkId = pref;
+  }
 }
 async function loadDashContests() {
   if (!selectedCollegeId) return;
@@ -1696,13 +1740,13 @@ function renderStudents() {
   const start = (studentsPage - 1) * STUDENTS_PAGE;
   const rows = all.slice(start, start + STUDENTS_PAGE);
   $('students-table').innerHTML =
-    `<thead><tr><th><input type="checkbox" id="sel-all"/></th><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th>` +
+    `<thead><tr><th class="col-chk"><input type="checkbox" id="sel-all"/></th><th class="col-idx">#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th>` +
     (hasScrape ? `<th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th>` : '') +
-    `<th style="width:48px;text-align:center">Edit</th></tr></thead><tbody>` +
+    `<th class="col-edit">Edit</th></tr></thead><tbody>` +
     (rows.length ? rows.map((r, idx) =>
-      `<tr><td><input type="checkbox" class="sel" value="${r.id}"/></td><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td>` +
-      (hasScrape ? `<td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td>` : '') +
-      `<td style="text-align:center"><button class="ghost sm edit-student-btn" data-edit-student="${r.id}" title="Edit student details" style="padding:2px 7px;font-size:.85rem;cursor:pointer">✏️</button></td></tr>`).join('')
+      `<tr><td class="col-chk"><input type="checkbox" class="sel" value="${r.id}"/></td><td class="col-idx">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="badge none" style="margin-left:6px">absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td>` +
+      (hasScrape ? `<td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="comp-wrap"><div class="bar"><span style="width:${r.completion}%"></span></div><span class="comp-pct">${r.completion}%</span></div></td>` : '') +
+      `<td class="col-edit"><button class="ghost xs edit-student-btn" data-edit-student="${r.id}" title="Edit student details">✏️</button></td></tr>`).join('')
       : `<tr><td colspan="${hasScrape ? 10 : 7}" class="muted">No students. Upload a roster (Upload tab).</td></tr>`) + `</tbody>`;
   const selAll = $('sel-all'); if (selAll) selAll.addEventListener('change', () => document.querySelectorAll('#students-table .sel').forEach((c) => (c.checked = selAll.checked)));
   const from = all.length ? start + 1 : 0;
@@ -1847,11 +1891,17 @@ $('daily-semester')?.addEventListener('change', () => { dailyLinkId = ''; dailyP
 $('daily-contest').addEventListener('change', (e) => { dailyContestId = e.target.value; dailyLinkId = ''; dailyPage = 1; renderDaily(); });
 $('daily-link')?.addEventListener('change', (e) => { dailyLinkId = e.target.value; dailyPage = 1; renderDaily(); });
 function renderDailyContestOptions() {
-  const filtered = filterBySemester(dailyContests, $('daily-semester')?.value || '');
+  const semVal = $('daily-semester')?.value || '';
+  const filtered = filterBySemester(dailyContests, semVal);
   const sel = $('daily-contest');
-  fillGroupedContestSelect(sel, filtered, { emptyText: 'No courses' });
+  fillGroupedContestSelect(sel, filtered, { emptyText: 'No courses', activeSemester: semVal });
   if (!filtered.some((c) => String(c.id) === String(dailyContestId))) dailyContestId = filtered[0] ? String(filtered[0].id) : '';
   sel.value = dailyContestId;
+  const activeCt = filtered.find((c) => String(c.id) === String(dailyContestId));
+  if (activeCt && semVal) {
+    const pref = preferredLinkForSemester(activeCt, semVal);
+    if (pref) dailyLinkId = pref;
+  }
 }
 async function loadDailyContests() {
   if (!dailyCollegeId) return;
@@ -2144,11 +2194,17 @@ $('t-semester')?.addEventListener('change', () => { topicsLinkId = ''; renderTop
 $('t-contest-sel').addEventListener('change', (e) => { topicsContestId = e.target.value; topicsLinkId = ''; loadTopicsEditor(); });
 $('t-link')?.addEventListener('change', (e) => { topicsLinkId = e.target.value; loadTopicsEditor(); });
 function renderTopicsContestOptions() {
-  const filtered = filterBySemester(topicsContests, $('t-semester')?.value || '');
+  const semVal = $('t-semester')?.value || '';
+  const filtered = filterBySemester(topicsContests, semVal);
   const sel = $('t-contest-sel');
-  fillGroupedContestSelect(sel, filtered, { emptyText: 'No courses' });
+  fillGroupedContestSelect(sel, filtered, { emptyText: 'No courses', activeSemester: semVal });
   if (!filtered.some((c) => String(c.id) === String(topicsContestId))) topicsContestId = filtered[0] ? String(filtered[0].id) : '';
   sel.value = topicsContestId;
+  const activeCt = filtered.find((c) => String(c.id) === String(topicsContestId));
+  if (activeCt && semVal) {
+    const pref = preferredLinkForSemester(activeCt, semVal);
+    if (pref) topicsLinkId = pref;
+  }
 }
 async function loadTopicsContests() {
   if (!topicsCollegeId) return;

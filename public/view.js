@@ -127,20 +127,42 @@ function applyPayload(d) {
   fillFilters(); renderSummary(); renderTopicAnalysis(); renderCompletion(); renderCategoryChart(); renderStudents(); renderDaily();
 }
 let collegeContests = [];
+function semFromLinkLabel(label) {
+  const m = String(label || '').trim().match(/^(Sem\s*\d+)/i);
+  return m ? ('Sem ' + m[1].replace(/\D+/g, '')) : '';
+}
+function contestSemesters(c) {
+  const out = new Set();
+  if ((c?.semester || '').trim()) out.add(c.semester.trim());
+  for (const l of (c?.links || [])) {
+    const ls = semFromLinkLabel(l.label);
+    if (ls) out.add(ls);
+  }
+  return out;
+}
+function preferredLinkForSemester(ct, semVal) {
+  if (!ct || !semVal || semVal === '__unassigned__') return '';
+  const hit = (ct.links || []).find((l) => semFromLinkLabel(l.label) === semVal);
+  return hit ? String(hit.id) : '';
+}
 function renderViewContestSelect(semFilter = '') {
   const sel = $('view-contest');
   const filtered = !semFilter
     ? collegeContests
     : semFilter === '__unassigned__'
-      ? collegeContests.filter((c) => !(c.semester || '').trim())
-      : collegeContests.filter((c) => (c.semester || '').trim() === semFilter);
+      ? collegeContests.filter((c) => contestSemesters(c).size === 0)
+      : collegeContests.filter((c) => contestSemesters(c).has(semFilter));
+  const optHtml = (c) => `<option value="${c.id}">${esc(c.name)}${c.isArchived ? ' [Archived]' : ''}${c.hasLink ? '' : ' (no link)'}</option>`;
+  if (semFilter) {
+    sel.innerHTML = filtered.map(optHtml).join('');
+    return filtered;
+  }
   const groups = new Map();
   for (const c of filtered) {
     const k = (c.semester || '').trim() || 'Unassigned';
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(c);
   }
-  const optHtml = (c) => `<option value="${c.id}">${esc(c.name)}${c.isArchived ? ' [Archived]' : ''}${c.hasLink ? '' : ' (no link)'}</option>`;
   const useGroups = groups.size > 1 || !groups.has('Unassigned');
   if (useGroups) {
     const keys = Array.from(groups.keys()).sort((a, b) => a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b, undefined, { numeric: true }));
@@ -175,24 +197,34 @@ async function boot() {
       if (!collegeContests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
       if (collegeContests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
 
-      const sems = Array.from(new Set(collegeContests.map((c) => (c.semester || '').trim()).filter(Boolean)))
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-      const hasUnassigned = collegeContests.some((c) => !(c.semester || '').trim());
+      const semSet = new Set();
+      let hasUnassigned = false;
+      for (const c of collegeContests) {
+        const cs = contestSemesters(c);
+        if (!cs.size) hasUnassigned = true;
+        else for (const s of cs) semSet.add(s);
+      }
+      const sems = Array.from(semSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
       if (sems.length && $('view-sem-wrap') && $('view-sem')) {
         $('view-sem-wrap').classList.remove('hidden');
         $('view-sem').innerHTML = `<option value="">All semesters</option>` +
           sems.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('') +
           (hasUnassigned ? `<option value="__unassigned__">Unassigned</option>` : '');
         $('view-sem').onchange = () => {
-          const list = renderViewContestSelect($('view-sem').value);
-          if (list.length) loadCollegeContest(list[0].id, '');
+          const semVal = $('view-sem').value;
+          const list = renderViewContestSelect(semVal);
+          if (list.length) loadCollegeContest(list[0].id, preferredLinkForSemester(list[0], semVal));
         };
       }
 
       const sel = $('view-contest'); $('view-contest-wrap').classList.remove('hidden');
       syncViewSelectorsVisibility();
       const initial = renderViewContestSelect('');
-      sel.onchange = () => loadCollegeContest(sel.value, '');
+      sel.onchange = () => {
+        const semVal = $('view-sem')?.value || '';
+        const ct = collegeContests.find((x) => String(x.id) === String(sel.value));
+        loadCollegeContest(sel.value, preferredLinkForSemester(ct, semVal));
+      };
       if (initial.length) await loadCollegeContest(initial[0].id, '');
     } else {
       await loadSharedContest('');
@@ -558,9 +590,9 @@ function renderStudents() {
   if (studentsPage > pages) studentsPage = pages;
   const start = (studentsPage - 1) * STUDENTS_PAGE, rows = all.slice(start, start + STUDENTS_PAGE);
   $('students-table').innerHTML =
-    `<thead><tr><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th><th style="width:48px;text-align:center">Edit</th></tr></thead><tbody>` +
+    `<thead><tr><th class="col-idx">#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th><th class="col-edit">Edit</th></tr></thead><tbody>` +
     (rows.length ? rows.map((r, idx) =>
-      `<tr><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td><td style="text-align:center"><button class="ghost sm edit-student-btn" data-edit-student="${r.id}" title="Check & Update student details" style="padding:2px 7px;font-size:.85rem;cursor:pointer">✏️</button></td></tr>`).join('')
+      `<tr><td class="col-idx">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="badge none" style="margin-left:6px">absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="comp-wrap"><div class="bar"><span style="width:${r.completion}%"></span></div><span class="comp-pct">${r.completion}%</span></div></td><td class="col-edit"><button class="ghost xs edit-student-btn" data-edit-student="${r.id}" title="Check & Update student details">✏️</button></td></tr>`).join('')
       : `<tr><td colspan="9" class="muted">No students.</td></tr>`) + `</tbody>`;
   const from = all.length ? start + 1 : 0;
   $('students-pager').innerHTML = all.length > STUDENTS_PAGE ? `<button class="ghost sm" id="st-prev" ${studentsPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + STUDENTS_PAGE, all.length)} of ${all.length} · page ${studentsPage}/${pages}</span><button class="ghost sm" id="st-next" ${studentsPage >= pages ? 'disabled' : ''}>Next ›</button>` : '';

@@ -903,10 +903,20 @@ async function loadLinkExportData(contest, link, studentsOverride = null) {
     : { ...contest, semester: contest.semester || (link?.label !== 'Main' ? link?.label : '') };
   return { contest: virtualContest, dash, topics, categories, students, firstSolvedMap: prog.firstSolved };
 }
-async function expandContestExportData(contest, studentsOverride = null) {
+function semFromLinkLabel(label) {
+  const m = String(label || '').trim().match(/^(Sem\s*\d+)/i);
+  return m ? ('Sem ' + m[1].replace(/\D+/g, '')) : '';
+}
+async function expandContestExportData(contest, studentsOverride = null, semesterFilter = '') {
   const links = getEffectiveLinks(contest);
   const out = [];
-  for (const l of links) out.push(await loadLinkExportData(contest, l, studentsOverride));
+  for (const l of links) {
+    if (semesterFilter) {
+      const linkSem = semFromLinkLabel(l.label) || String(contest.semester || '').trim();
+      if (linkSem.toLowerCase() !== semesterFilter.toLowerCase()) continue;
+    }
+    out.push(await loadLinkExportData(contest, l, studentsOverride));
+  }
   return out;
 }
 function filterStudentsByQuery(students, query = {}) {
@@ -988,12 +998,12 @@ app.get('/api/export/college/:collegeId', requireAdmin, async (req, res) => {
     const includeArchived = req.query.includeArchived !== 'false';
     const [allStudents, contests] = await Promise.all([
       db.listStudents({ college: college.name }),
-      db.listContests(college.name, { semester: semesterFilter || undefined, includeArchived }),
+      db.listContests(college.name, { includeArchived }),
     ]);
 
     const coursesData = [];
     for (const ct of contests) {
-      coursesData.push(...(await expandContestExportData(ct)));
+      coursesData.push(...(await expandContestExportData(ct, null, semesterFilter)));
     }
 
     const origin = requestOrigin(req);
@@ -1504,10 +1514,10 @@ app.get('/api/college/:token/export/college', async (req, res) => {
     const semesterFilter = req.query.semester ? String(req.query.semester).trim() : '';
     const [allStudents, contests] = await Promise.all([
       db.listStudents({ college: college.name }),
-      db.listContests(college.name, { semester: semesterFilter || undefined, includeArchived: true }),
+      db.listContests(college.name, { includeArchived: true }),
     ]);
     const coursesData = [];
-    for (const ct of contests) coursesData.push(...(await expandContestExportData(ct)));
+    for (const ct of contests) coursesData.push(...(await expandContestExportData(ct, null, semesterFilter)));
     const origin = requestOrigin(req);
     const collegeShareUrl = origin ? `${origin}/college/${req.params.token}` : '';
     const buf = await buildCollegeWorkbook({
