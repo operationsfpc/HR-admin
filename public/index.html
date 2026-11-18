@@ -51,6 +51,7 @@
               <label class="inline-label">College: <select id="dash-college"></select></label>
               <label class="inline-label">Semester: <select id="dash-semester"><option value="">All semesters</option></select></label>
               <label class="inline-label">Course: <select id="dash-contest"></select></label>
+              <label id="dash-link-wrap" class="inline-label hidden">Link / Label: <select id="dash-link"></select></label>
               <button id="contest-add" class="ghost sm">＋ Course</button>
               <button id="contest-del" class="ghost sm danger">🗑</button>
               <button id="share-btn" class="ghost sm" title="Share only this course">🔗 Share course</button>
@@ -74,6 +75,12 @@
               <input id="dash-contest-url" placeholder="HackerRank course link for the selected course" style="flex:1" />
             </label>
             <button id="dash-savelink" class="ghost sm">Save link</button>
+          </div>
+          <div id="dash-links-bar" class="form-row" style="margin-top:6px;flex-wrap:wrap;gap:6px;align-items:center"></div>
+          <div class="form-row" style="margin-top:6px">
+            <input id="dash-new-link-label" placeholder="Add link label (e.g. Sem 2, OOPS, DS)" style="flex:0 0 220px" />
+            <input id="dash-new-link-url" placeholder="Paste another HackerRank contest link to attach to this course…" style="flex:1" />
+            <button id="dash-add-link-btn" class="primary sm" title="Attach an additional labeled HackerRank link to this existing course without overwriting old progress">＋ Add labeled link</button>
           </div>
           <div id="dash-progress" class="progress hidden"><div class="lab" id="dash-prog-lab"></div><div class="bar"><span id="dash-prog-fill" style="width:0%"></span></div></div>
           <div id="dash-status" class="status"></div>
@@ -222,6 +229,7 @@
               <label class="inline-label">College: <select id="daily-college"></select></label>
               <label class="inline-label">Semester: <select id="daily-semester"><option value="">All semesters</option></select></label>
               <label class="inline-label">Course: <select id="daily-contest"></select></label>
+              <label id="daily-link-wrap" class="inline-label hidden">Link / Label: <select id="daily-link"></select></label>
             </div>
           </div>
           <p class="muted">Questions each student completed per day over the <b>last 10 days</b>, ending today. Days with no sync show a dot (no change recorded). Every student is listed, whether or not they rank on the leaderboard.</p>
@@ -246,6 +254,7 @@
               <label class="inline-label">College: <select id="t-college"></select></label>
               <label class="inline-label">Semester: <select id="t-semester"><option value="">All semesters</option></select></label>
               <label class="inline-label">Course: <select id="t-contest-sel"></select></label>
+              <label id="t-link-wrap" class="inline-label hidden">Link / Label: <select id="t-link"></select></label>
               <button id="t-autofill" class="ghost sm">Auto-fill from titles</button>
               <label class="inline-label">Set category: <select id="t-bulk-cat"></select></label>
               <button id="t-bulk-apply" class="ghost sm" title="Set this category on every question below">Apply to all</button>
@@ -476,7 +485,7 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=6"></script>
-  <script src="/app.js?v=6"></script>
+  <script src="/theme.js?v=7"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>

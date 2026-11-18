@@ -25,9 +25,12 @@
           id="view-sem"></select></label>
       <label id="view-contest-wrap" class="inline-label hidden" style="margin:0">Course: <select
           id="view-contest"></select></label>
+      <label id="view-link-wrap" class="inline-label hidden" style="margin:0">Link / Label: <select
+          id="view-link"></select></label>
       <button id="view-sync-btn" class="sm" title="Sync latest data from HackerRank">⟳ Sync now</button>
       <button id="view-sync-all-btn" class="ghost sm hidden" title="Sync all courses for this college">⟳ Sync all
         courses</button>
+      <button id="view-export-college-btn" class="ghost sm hidden" title="Download formatted Excel report for all courses in this college (respects semester filter)">⬇ Export College Excel</button>
     </div>
     <div id="view-progress" class="progress hidden" style="margin-bottom:8px">
       <div class="lab" id="view-prog-lab"></div>
@@ -112,6 +115,7 @@
               <option value="">All years</option>
             </select>
             <input id="f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
+            <button id="view-export-btn" class="ghost sm" title="Download formatted multi-sheet Excel report for the current course & link filter">⬇ Export Excel</button>
           </div>
         </div>
         <div class="table-scroll">
@@ -230,7 +234,11 @@
   <div id="perf-modal" class="modal-overlay hidden">
     <div class="modal wide">
       <div class="card-head">
-        <h3 id="perf-title"></h3><button id="perf-close" class="ghost sm" title="Close">✕</button>
+        <h3 id="perf-title"></h3>
+        <div class="form-row" style="margin:0;gap:6px">
+          <button id="perf-export-btn" class="ghost sm hidden" title="Download this student's complete progress Excel report">⬇ Export Student Excel</button>
+          <button id="perf-close" class="ghost sm" title="Close">✕</button>
+        </div>
       </div>
       <div id="perf-meta" class="muted"></div>
       <div id="perf-stats"></div>
@@ -394,8 +402,8 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=7"></script>
-  <script src="/view.js?v=7"></script>
+  <script src="/theme.js?v=8"></script>
+  <script src="/view.js?v=8"></script>
 </body>
 
 </html>

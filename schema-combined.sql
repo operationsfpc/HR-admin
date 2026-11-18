@@ -23,11 +23,22 @@ CREATE TABLE IF NOT EXISTS hackerrank.contests (
   id bigint generated always as identity primary key,
   college text, name text, contest_url text, slug text, share_token text,
   semester text NOT NULL DEFAULT '',
+  primary_label text NOT NULL DEFAULT '',
   is_archived boolean NOT NULL DEFAULT false,
   created_at timestamptz default now()
 );
 ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS semester text NOT NULL DEFAULT '';
+ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS primary_label text NOT NULL DEFAULT '';
 ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS hackerrank.contest_links (
+  id bigint generated always as identity primary key,
+  contest_id bigint NOT NULL,
+  label text NOT NULL DEFAULT '',
+  contest_url text NOT NULL DEFAULT '',
+  slug text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS hackerrank.contest_students (
   contest_id bigint, username_key text, primary key(contest_id, username_key)

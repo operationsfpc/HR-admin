@@ -7,6 +7,7 @@ let roster = [];        // current college roster
 let dashData = null;    // latest scrape dashboard for current contest
 let selectedCollegeId = '';
 let selectedContestId = '';
+let selectedLinkId = '';
 let dashContests = [];  // contests of the selected dashboard college
 let solvedFilter = null; // completion-breakdown filter (number of solved) or null
 let studentsPage = 1;
@@ -547,15 +548,20 @@ function renderCcTable() {
         `</select>`;
 
       const archBadge = c.isArchived ? ` <span class="chip" style="font-size:.7rem;opacity:.75">Archived</span>` : '';
+      const linksList = Array.isArray(c.links) && c.links.length ? c.links : [];
+      const linksBadge = linksList.length > 1
+        ? `<div class="muted" style="font-size:.74rem;margin-top:2px">${linksList.length} links: ${linksList.map((l) => `<span class="chip" style="font-size:.7rem;padding:1px 5px">${esc(l.label)}</span>`).join(' ')}</div>`
+        : '';
 
       return `<tr style="${c.isArchived ? 'opacity:.72' : ''}">` +
         `<td class="num">${start + i + 1}</td>` +
         `<td>${semSelectHtml}</td>` +
-        `<td><b>${esc(c.name)}</b>${archBadge}</td>` +
+        `<td><b>${esc(c.name)}</b>${archBadge}${linksBadge}</td>` +
         `<td>${c.slug ? `<span class="chip" style="font-size:.74rem">${esc(c.slug)}</span>` : '<span class="muted">—</span>'}</td>` +
         `<td class="muted" style="max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.contestUrl || '')}">${esc(c.contestUrl || '—')}</td>` +
         `<td>${shareHtml}</td>` +
         `<td style="text-align:center;white-space:nowrap">` +
+        `<button class="ghost sm" data-add-link="${c.id}" data-course-name="${esc(c.name)}" title="Add another labeled HackerRank link to this existing course" style="padding:2px 6px;margin-right:3px">＋ Link</button>` +
         `<button class="ghost sm" data-export-course="${c.id}" data-course-name="${esc(c.name)}" title="Export Formatted Course Excel Report" style="padding:2px 6px;margin-right:3px">📥</button>` +
         `<button class="ghost sm" data-archive-course="${c.id}" data-archived="${c.isArchived ? '1' : '0'}" title="${c.isArchived ? 'Restore (Unarchive) Course' : 'Archive Course (keeps all progress)'}" style="padding:2px 6px;margin-right:3px">${c.isArchived ? '↩' : '📦'}</button>` +
         `<button class="ghost sm danger" data-delcc="${c.id}" title="Delete Course" style="padding:2px 6px">🗑</button>` +
@@ -634,9 +640,25 @@ $('cc-bulk-add').addEventListener('click', async () => {
 $('cc-table').addEventListener('click', async (e) => {
   const del = e.target.closest('[data-delcc]');
   const arch = e.target.closest('[data-archive-course]');
+  const addLinkBtn = e.target.closest('[data-add-link]');
   const copyBtn = e.target.closest('[data-copy-course-share]');
   const genBtn = e.target.closest('[data-gen-course-share]');
   const expBtn = e.target.closest('[data-export-course]');
+
+  if (addLinkBtn) {
+    const cid = addLinkBtn.dataset.addLink;
+    const cname = addLinkBtn.dataset.courseName || 'Course';
+    const label = prompt(`Label name for the new link on "${cname}" (e.g. Sem 2, OOPS, DS):`);
+    if (!label || !label.trim()) return;
+    const contestUrl = prompt(`Paste HackerRank contest URL for "${label.trim()}":`);
+    if (!contestUrl || !contestUrl.trim()) return;
+    try {
+      await api(`/api/contests/${cid}/links`, { method: 'POST', body: { label: label.trim(), contestUrl: contestUrl.trim() } });
+      setStatus($('cc-status'), `Attached "${label.trim()}" link to "${cname}" (old progress preserved).`, 'ok');
+      clearDashCache();
+      await refreshContestSelectors($('cc-college').value);
+    } catch (err) { setStatus($('cc-status'), err.message, 'err'); }
+  }
 
   if (arch) {
     const cid = arch.dataset.archiveCourse;
@@ -1037,7 +1059,8 @@ $('hr-connect-btn').addEventListener('click', async () => {
 // ---------- Dashboard ----------
 const collegeName = (id) => { const c = colleges.find((x) => String(x.id) === String(id)); return c ? c.name : ''; };
 $('dash-college').addEventListener('change', async (e) => { selectedCollegeId = e.target.value; selectedContestId = ''; await loadDashContests(); });
-$('dash-contest').addEventListener('change', (e) => { selectedContestId = e.target.value; loadDashboard(); });
+$('dash-contest').addEventListener('change', (e) => { selectedContestId = e.target.value; selectedLinkId = ''; loadDashboard(); });
+$('dash-link')?.addEventListener('change', (e) => { selectedLinkId = e.target.value; loadDashboard(); });
 $('sync-btn').addEventListener('click', syncContest);
 $('autosync-btn').addEventListener('click', async () => {
   setStatus($('dash-status'), 'Running auto-sync for all contests… this can take a while.', 'info');
@@ -1138,32 +1161,172 @@ async function delContest() {
   selectedContestId = ''; await loadDashContests();
 }
 
+function getContestLinksFor(ct) {
+  if (!ct) return [];
+  if (Array.isArray(ct.links) && ct.links.length) return ct.links;
+  return [{ id: 'primary', label: ct.primaryLabel || ct.semester || 'Main', contestUrl: ct.contestUrl || '', slug: ct.slug || '', isPrimary: true }];
+}
+
+function fillLinkSelect(sel, wrap, links, { includeAll = true, currentVal = '' } = {}) {
+  if (!sel || !wrap) return 'primary';
+  if (!links || links.length <= 1) {
+    wrap.classList.add('hidden');
+    sel.innerHTML = links && links[0] ? `<option value="${esc(links[0].id)}">${esc(links[0].label)}</option>` : '';
+    return links && links[0] ? String(links[0].id) : 'primary';
+  }
+  wrap.classList.remove('hidden');
+  let html = links.map((l) => `<option value="${esc(l.id)}">${esc(l.label)}${l.slug ? '' : ' (no link)'}</option>`).join('');
+  if (includeAll) html += `<option value="all">All links (Combined)</option>`;
+  sel.innerHTML = html;
+  const validVals = Array.from(sel.options).map((o) => o.value);
+  const next = currentVal && validVals.includes(String(currentVal)) ? String(currentVal) : String(links[0].id);
+  sel.value = next;
+  return next;
+}
+
+function renderDashLinksBar(ct) {
+  const bar = $('dash-links-bar');
+  if (!bar) return;
+  if (!ct) { bar.innerHTML = ''; return; }
+  const links = getContestLinksFor(ct);
+  selectedLinkId = fillLinkSelect($('dash-link'), $('dash-link-wrap'), links, { includeAll: true, currentVal: selectedLinkId });
+  const active = selectedLinkId === 'all' ? null : (links.find((l) => String(l.id) === String(selectedLinkId)) || links[0]);
+  $('dash-contest-url').value = active ? (active.contestUrl || '') : (ct.contestUrl || '');
+  $('dash-contest-url').disabled = selectedLinkId === 'all';
+  $('dash-savelink').disabled = selectedLinkId === 'all';
+
+  if (links.length <= 1) {
+    const primary = links[0];
+    bar.innerHTML = `<span class="muted" style="font-size:.8rem">Current link label: <b>${esc(primary?.label || 'Main')}</b></span>` +
+      `<button class="ghost sm" data-rename-link="primary" data-cur-label="${esc(primary?.label || '')}" style="padding:2px 7px;font-size:.76rem">✎ Rename label</button>`;
+    return;
+  }
+  bar.innerHTML = `<span class="muted" style="font-size:.8rem">Attached links:</span>` +
+    links.map((l) => {
+      const isAct = String(selectedLinkId) === String(l.id);
+      return `<span class="chip" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;${isAct ? 'outline:2px solid var(--accent);font-weight:600' : ''}">` +
+        `<a href="#" data-pick-link="${esc(l.id)}" style="text-decoration:none;color:inherit">${esc(l.label)}</a>` +
+        `<button class="ghost sm" data-rename-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Rename label" style="padding:0 4px;font-size:.74rem">✎</button>` +
+        (l.isPrimary ? '' : `<button class="ghost sm danger" data-del-link="${esc(l.id)}" data-cur-label="${esc(l.label)}" title="Remove link" style="padding:0 4px;font-size:.74rem">✕</button>`) +
+        `</span>`;
+    }).join('') +
+    `<span class="chip" style="padding:3px 8px;cursor:pointer;${selectedLinkId === 'all' ? 'outline:2px solid var(--accent);font-weight:600' : ''}" data-pick-link="all">All (${links.length})</span>`;
+}
+
 function showContestLink() {
   const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
-  $('dash-contest-url').value = ct ? (ct.contestUrl || '') : '';
+  renderDashLinksBar(ct);
 }
-$('dash-savelink').addEventListener('click', async () => {
-  if (!selectedContestId) return setStatus($('dash-status'), 'Select a course first.', 'err');
-  await saveContestLinkWithGuard(selectedContestId, $('dash-contest-url').value.trim(), $('dash-status'), loadDashContests);
+
+$('dash-links-bar')?.addEventListener('click', async (e) => {
+  const pick = e.target.closest('[data-pick-link]');
+  if (pick) {
+    e.preventDefault();
+    selectedLinkId = pick.dataset.pickLink;
+    if ($('dash-link')) $('dash-link').value = selectedLinkId;
+    loadDashboard();
+    return;
+  }
+  const ren = e.target.closest('[data-rename-link]');
+  if (ren && selectedContestId) {
+    const lid = ren.dataset.renameLink;
+    const next = prompt('Enter label name for this link (e.g. Sem 1, FOP, OOPS):', ren.dataset.curLabel || '');
+    if (!next || !next.trim()) return;
+    try {
+      await api(`/api/contests/${selectedContestId}/links/${lid}`, { method: 'PUT', body: { label: next.trim() } });
+      clearDashCache();
+      setStatus($('dash-status'), `Renamed link label to "${next.trim()}".`, 'ok');
+      await loadDashContests();
+      await loadCollegeContests();
+    } catch (err) { setStatus($('dash-status'), err.message, 'err'); }
+    return;
+  }
+  const del = e.target.closest('[data-del-link]');
+  if (del && selectedContestId) {
+    const lid = del.dataset.delLink;
+    if (!confirm(`Remove link "${del.dataset.curLabel}" from this course? (Saved student progress rows remain safe in the database.)`)) return;
+    try {
+      await api(`/api/contests/${selectedContestId}/links/${lid}`, { method: 'DELETE' });
+      if (String(selectedLinkId) === String(lid)) selectedLinkId = 'primary';
+      clearDashCache();
+      setStatus($('dash-status'), `Removed link "${del.dataset.curLabel}".`, 'ok');
+      await loadDashContests();
+      await loadCollegeContests();
+    } catch (err) { setStatus($('dash-status'), err.message, 'err'); }
+  }
 });
 
-// Browser-side cache of contest dashboards so switching back is instant.
-// Cleared for a contest whenever it's re-synced.
+$('dash-add-link-btn')?.addEventListener('click', async () => {
+  if (!selectedContestId) return setStatus($('dash-status'), 'Select a course first.', 'err');
+  const label = ($('dash-new-link-label')?.value || '').trim();
+  const contestUrl = ($('dash-new-link-url')?.value || '').trim();
+  if (!label) return setStatus($('dash-status'), 'Enter a label name (e.g. Sem 2 or OOPS).', 'err');
+  if (!contestUrl) return setStatus($('dash-status'), 'Paste a HackerRank contest link.', 'err');
+  try {
+    const r = await api(`/api/contests/${selectedContestId}/links`, { method: 'POST', body: { label, contestUrl } });
+    $('dash-new-link-label').value = '';
+    $('dash-new-link-url').value = '';
+    selectedLinkId = String(r.link?.id || 'primary');
+    clearDashCache();
+    setStatus($('dash-status'), `Attached "${label}" to this course. Click Sync now to fetch its progress!`, 'ok');
+    await loadDashContests();
+    await loadCollegeContests();
+  } catch (e) { setStatus($('dash-status'), e.message, 'err'); }
+});
+
+$('dash-savelink').addEventListener('click', async () => {
+  if (!selectedContestId) return setStatus($('dash-status'), 'Select a course first.', 'err');
+  if (selectedLinkId === 'all') return setStatus($('dash-status'), 'Pick a specific link label above to edit its URL.', 'info');
+  const url = $('dash-contest-url').value.trim();
+  const lid = selectedLinkId || 'primary';
+  if (lid === 'primary') {
+    await saveContestLinkWithGuard(selectedContestId, url, $('dash-status'), async () => { clearDashCache(); await loadDashContests(); });
+  } else {
+    try {
+      await api(`/api/contests/${selectedContestId}/links/${lid}`, { method: 'PUT', body: { contestUrl: url } });
+      clearDashCache();
+      setStatus($('dash-status'), 'Link updated. Sync it now.', 'ok');
+      await loadDashContests();
+    } catch (e) {
+      if (e.status === 409 && e.code === 'PROGRESS_EXISTS') {
+        if (!confirm(`${e.message}\n\nClick Cancel to keep old progress safe. Click OK ONLY if fixing a typo.`)) return;
+        await api(`/api/contests/${selectedContestId}/links/${lid}`, { method: 'PUT', body: { contestUrl: url, force: true } });
+        clearDashCache();
+        setStatus($('dash-status'), 'Link updated.', 'ok');
+        await loadDashContests();
+      } else setStatus($('dash-status'), e.message, 'err');
+    }
+  }
+});
+
+// Browser-side cache of contest dashboards keyed by contestId:linkId.
 const dashCache = new Map();
-function clearDashCache(contestId) { if (contestId == null) dashCache.clear(); else dashCache.delete(String(contestId)); }
+function clearDashCache(contestId) {
+  if (contestId == null) { dashCache.clear(); return; }
+  const prefix = String(contestId) + ':';
+  for (const k of Array.from(dashCache.keys())) if (k === String(contestId) || k.startsWith(prefix)) dashCache.delete(k);
+}
 
 function applyDashboard(d) {
   dashData = d.dashboard;
   dashTopics = d.topics || {};
   dashCats = d.categories || {};
-  roster = d.students || [];  // students mapped to this contest (falls back to whole college if none mapped)
+  roster = d.students || [];
+  if (d.contest) {
+    const idx = dashContests.findIndex((c) => String(c.id) === String(d.contest.id));
+    if (idx !== -1) dashContests[idx] = d.contest;
+    if (d.activeLinkId) selectedLinkId = String(d.activeLinkId);
+    renderDashLinksBar(d.contest);
+  }
   fillFilters();
   renderSummary();
   renderTopicAnalysis();
   renderCompletion();
   renderCategoryChart();
   renderStudents();
-  setStatus($('dash-status'), dashData ? '' : `"${d.contest.name}" not synced yet. Connect HackerRank and Sync now.`, 'info');
+  const activeLink = (d.links || []).find((l) => String(l.id) === String(d.activeLinkId));
+  const labelText = d.activeLinkId === 'all' ? `${d.contest.name} (All links)` : (activeLink && (d.links || []).length > 1 ? `${d.contest.name} — ${activeLink.label}` : d.contest.name);
+  setStatus($('dash-status'), dashData ? '' : `"${labelText}" not synced yet. Connect HackerRank and Sync now.`, 'info');
 }
 
 async function loadDashboard() {
@@ -1171,32 +1334,35 @@ async function loadDashboard() {
   studentsPage = 1;
   showContestLink();
   if (!selectedContestId) {
-    // Only when there's no contest do we need the whole-college roster.
     roster = selectedCollegeId ? (await api('/api/students?college=' + encodeURIComponent(collegeName(selectedCollegeId)))).students || [] : [];
     dashData = null; dashTopics = {}; fillFilters(); renderSummary(); renderTopicAnalysis(); renderStudents();
     setStatus($('dash-status'), 'No course yet — add one with ＋ Course.', 'info'); return;
   }
   const id = String(selectedContestId);
-  const cached = dashCache.get(id);
+  const lid = String(selectedLinkId || 'primary');
+  const cacheKey = `${id}:${lid}`;
+  const qs = lid ? `?linkId=${encodeURIComponent(lid)}` : '';
+  const cached = dashCache.get(cacheKey);
   if (cached) {
-    applyDashboard(cached);                       // paint instantly from cache
-    revalidateDashboard(id);                      // then refresh quietly in the background
+    applyDashboard(cached);
+    revalidateDashboard(id, lid);
     return;
   }
   setStatus($('dash-status'), 'Loading…', 'info');
-  // The contest-dashboard call already returns this contest's students, so skip the redundant roster fetch.
-  const d = await api('/api/contest-dashboard/' + id);
-  dashCache.set(id, d);
-  if (String(selectedContestId) !== id) return;   // user switched away while it loaded
+  const d = await api('/api/contest-dashboard/' + id + qs);
+  dashCache.set(cacheKey, d);
+  if (String(selectedContestId) !== id || String(selectedLinkId || 'primary') !== lid) return;
   applyDashboard(d);
   prefetchSiblingContests();
 }
 
 // Refresh a cached dashboard in the background; re-render only if still shown.
-function revalidateDashboard(id) {
-  api('/api/contest-dashboard/' + id).then((d) => {
-    dashCache.set(id, d);
-    if (String(selectedContestId) === String(id)) applyDashboard(d);
+function revalidateDashboard(id, lid = 'primary') {
+  const cacheKey = `${id}:${lid}`;
+  const qs = lid ? `?linkId=${encodeURIComponent(lid)}` : '';
+  api('/api/contest-dashboard/' + id + qs).then((d) => {
+    dashCache.set(cacheKey, d);
+    if (String(selectedContestId) === String(id) && String(selectedLinkId || 'primary') === String(lid)) applyDashboard(d);
   }).catch(() => { /* keep showing cached data */ });
 }
 
@@ -1618,6 +1784,7 @@ $('export-btn').addEventListener('click', () => {
   if (!selectedContestId) return setStatus($('dash-status'), 'Select a course first.', 'err');
   const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
   const params = new URLSearchParams();
+  if (selectedLinkId) params.set('linkId', selectedLinkId);
   if ($('f-campus').value) params.set('campus', $('f-campus').value);
   if ($('f-department').value) params.set('department', $('f-department').value);
   if ($('f-section').value) params.set('section', $('f-section').value);
@@ -1634,15 +1801,16 @@ $('export-college-btn')?.addEventListener('click', () => {
 });
 
 // ---------- Daily tab ----------
-let dailyCollegeId = '', dailyContestId = '', dailyContests = [];
+let dailyCollegeId = '', dailyContestId = '', dailyLinkId = '', dailyContests = [];
 let dailyPage = 1;
 const DAILY_PAGE = 30;
 
 document.querySelectorAll('#tabs .tab').forEach((b) => { if (b.dataset.tab === 'daily') b.addEventListener('click', initDailyTab); });
 function initDailyTab() { fillCollegeSelect($('daily-college')); if (!dailyCollegeId && colleges[0]) dailyCollegeId = String(colleges[0].id); $('daily-college').value = dailyCollegeId; loadDailyContests(); }
-$('daily-college').addEventListener('change', (e) => { dailyCollegeId = e.target.value; dailyContestId = ''; dailyPage = 1; loadDailyContests(); });
-$('daily-semester')?.addEventListener('change', () => { dailyPage = 1; renderDailyContestOptions(); renderDaily(); });
-$('daily-contest').addEventListener('change', (e) => { dailyContestId = e.target.value; dailyPage = 1; renderDaily(); });
+$('daily-college').addEventListener('change', (e) => { dailyCollegeId = e.target.value; dailyContestId = ''; dailyLinkId = ''; dailyPage = 1; loadDailyContests(); });
+$('daily-semester')?.addEventListener('change', () => { dailyLinkId = ''; dailyPage = 1; renderDailyContestOptions(); renderDaily(); });
+$('daily-contest').addEventListener('change', (e) => { dailyContestId = e.target.value; dailyLinkId = ''; dailyPage = 1; renderDaily(); });
+$('daily-link')?.addEventListener('change', (e) => { dailyLinkId = e.target.value; dailyPage = 1; renderDaily(); });
 function renderDailyContestOptions() {
   const filtered = filterBySemester(dailyContests, $('daily-semester')?.value || '');
   const sel = $('daily-contest');
@@ -1663,8 +1831,11 @@ function fmtDay(s) { const dt = new Date(s + 'T00:00:00'); return isNaN(dt) ? s 
 
 async function renderDaily() {
   const t = $('daily-table');
-  if (!dailyContestId) { t.innerHTML = ''; $('daily-note').textContent = ''; dailyDataCache = null; if ($('daily-table-pager')) $('daily-table-pager').innerHTML = ''; return; }
-  const d = await api('/api/daily/' + dailyContestId);
+  if (!dailyContestId) { t.innerHTML = ''; $('daily-note').textContent = ''; dailyDataCache = null; if ($('daily-table-pager')) $('daily-table-pager').innerHTML = ''; $('daily-link-wrap')?.classList.add('hidden'); return; }
+  const ct = dailyContests.find((c) => String(c.id) === String(dailyContestId));
+  dailyLinkId = fillLinkSelect($('daily-link'), $('daily-link-wrap'), getContestLinksFor(ct), { includeAll: true, currentVal: dailyLinkId });
+  const qs = dailyLinkId ? `?linkId=${encodeURIComponent(dailyLinkId)}` : '';
+  const d = await api('/api/daily/' + dailyContestId + qs);
   dailyDataCache = d;
   if (!d.days.length) { t.innerHTML = `<tbody><tr><td class="muted">No snapshots yet — sync this course on at least one day (ideally daily) to build history.</td></tr></tbody>`; $('daily-note').textContent = ''; if ($('daily-table-pager')) $('daily-table-pager').innerHTML = ''; return; }
   // Populate filter dropdowns from this course's students.
@@ -1930,12 +2101,13 @@ $('daily-modal-table')?.addEventListener('click', (e) => {
 });
 
 // ---------- Topics tab ----------
-let topicsCollegeId = '', topicsContestId = '', topicsContests = [];
+let topicsCollegeId = '', topicsContestId = '', topicsLinkId = '', topicsContests = [];
 document.querySelectorAll('#tabs .tab').forEach((b) => { if (b.dataset.tab === 'topics') b.addEventListener('click', initTopicsTab); });
 function initTopicsTab() { fillCollegeSelect($('t-college')); if (!topicsCollegeId && colleges[0]) topicsCollegeId = String(colleges[0].id); $('t-college').value = topicsCollegeId; loadTopicsContests(); }
-$('t-college').addEventListener('change', (e) => { topicsCollegeId = e.target.value; topicsContestId = ''; loadTopicsContests(); });
-$('t-semester')?.addEventListener('change', () => { renderTopicsContestOptions(); loadTopicsEditor(); });
-$('t-contest-sel').addEventListener('change', (e) => { topicsContestId = e.target.value; loadTopicsEditor(); });
+$('t-college').addEventListener('change', (e) => { topicsCollegeId = e.target.value; topicsContestId = ''; topicsLinkId = ''; loadTopicsContests(); });
+$('t-semester')?.addEventListener('change', () => { topicsLinkId = ''; renderTopicsContestOptions(); loadTopicsEditor(); });
+$('t-contest-sel').addEventListener('change', (e) => { topicsContestId = e.target.value; topicsLinkId = ''; loadTopicsEditor(); });
+$('t-link')?.addEventListener('change', (e) => { topicsLinkId = e.target.value; loadTopicsEditor(); });
 function renderTopicsContestOptions() {
   const filtered = filterBySemester(topicsContests, $('t-semester')?.value || '');
   const sel = $('t-contest-sel');
@@ -1951,10 +2123,13 @@ async function loadTopicsContests() {
   loadTopicsEditor();
 }
 async function loadTopicsEditor() {
-  if (!topicsContestId) { $('topics-table').innerHTML = ''; $('t-contest').value = ''; setStatus($('t-status'), 'No contests for this college — add one in the Dashboard tab.', 'info'); return; }
-  const d = await api('/api/topics/' + topicsContestId);
+  if (!topicsContestId) { $('topics-table').innerHTML = ''; $('t-contest').value = ''; $('t-link-wrap')?.classList.add('hidden'); setStatus($('t-status'), 'No contests for this college — add one in the Dashboard tab.', 'info'); return; }
+  const ct = topicsContests.find((c) => String(c.id) === String(topicsContestId));
+  topicsLinkId = fillLinkSelect($('t-link'), $('t-link-wrap'), getContestLinksFor(ct), { includeAll: false, currentVal: topicsLinkId });
+  const qs = topicsLinkId ? `?linkId=${encodeURIComponent(topicsLinkId)}` : '';
+  const d = await api('/api/topics/' + topicsContestId + qs);
   $('t-contest').value = d.contestUrl || '';
-  if (!d.contestUrl) { $('topics-table').innerHTML = ''; setStatus($('t-status'), 'This course has no link. Set it above and Save link.', 'info'); return; }
+  if (!d.contestUrl) { $('topics-table').innerHTML = ''; setStatus($('t-status'), 'This link has no URL. Set it above and Save link.', 'info'); return; }
   if (!d.hasScrape) { $('topics-table').innerHTML = ''; $('topic-videos-card').classList.add('hidden'); setStatus($('t-status'), `Course "${d.slug}" not synced yet. Sync it in the Dashboard tab to load its questions.`, 'info'); return; }
   setStatus($('t-status'), `${d.questions.length} questions in ${d.slug}.`, 'info');
   $('topics-table').innerHTML =
@@ -1968,7 +2143,8 @@ async function loadTopicsEditor() {
 async function loadTopicVideos() {
   const card = $('topic-videos-card');
   if (!topicsContestId) { card.classList.add('hidden'); return; }
-  const d = await api('/api/topic-videos/' + topicsContestId);
+  const qs = topicsLinkId ? `?linkId=${encodeURIComponent(topicsLinkId)}` : '';
+  const d = await api('/api/topic-videos/' + topicsContestId + qs);
   if (!d.hasScrape || !d.topics.length) { card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
   $('tv-table').innerHTML =
@@ -1995,12 +2171,29 @@ $('tv-save').addEventListener('click', async () => {
   if (!topicsContestId) return;
   const map = {};
   document.querySelectorAll('#tv-table .tv-in').forEach((inp) => { if (inp.value.trim()) map[inp.dataset.topic] = inp.value; });
-  try { const r = await api('/api/topic-videos/' + topicsContestId, { method: 'POST', body: { map } }); setStatus($('tv-status'), `Saved ${r.count} topic video(s).`, 'ok'); }
+  try { const r = await api('/api/topic-videos/' + topicsContestId, { method: 'POST', body: { map, linkId: topicsLinkId || 'primary' } }); setStatus($('tv-status'), `Saved ${r.count} topic video(s).`, 'ok'); }
   catch (e) { setStatus($('tv-status'), e.message, 'err'); }
 });
 $('t-savelink').addEventListener('click', async () => {
   if (!topicsContestId) return;
-  await saveContestLinkWithGuard(topicsContestId, $('t-contest').value.trim(), $('t-status'), loadTopicsContests);
+  const lid = topicsLinkId || 'primary';
+  const url = $('t-contest').value.trim();
+  if (lid === 'primary') {
+    await saveContestLinkWithGuard(topicsContestId, url, $('t-status'), loadTopicsContests);
+  } else {
+    try {
+      await api(`/api/contests/${topicsContestId}/links/${lid}`, { method: 'PUT', body: { contestUrl: url } });
+      setStatus($('t-status'), 'Link saved. Now sync it in the Dashboard tab.', 'ok');
+      await loadTopicsContests();
+    } catch (e) {
+      if (e.status === 409 && e.code === 'PROGRESS_EXISTS') {
+        if (!confirm(`${e.message}\n\nClick Cancel to keep old progress safe. Click OK ONLY if fixing a typo.`)) return;
+        await api(`/api/contests/${topicsContestId}/links/${lid}`, { method: 'PUT', body: { contestUrl: url, force: true } });
+        setStatus($('t-status'), 'Link updated.', 'ok');
+        await loadTopicsContests();
+      } else setStatus($('t-status'), e.message, 'err');
+    }
+  }
 });
 $('t-autofill').addEventListener('click', () => document.querySelectorAll('#topics-table .topic-in').forEach((inp) => { if (!inp.value.trim() && inp.dataset.sug) inp.value = inp.dataset.sug; }));
 $('t-save').addEventListener('click', async () => {
@@ -2009,9 +2202,10 @@ $('t-save').addEventListener('click', async () => {
   document.querySelectorAll('#topics-table .topic-in').forEach((inp) => { if (inp.value.trim()) map[inp.dataset.q] = inp.value.trim(); });
   const catMap = {};
   document.querySelectorAll('#topics-table .qcat-in').forEach((sel) => { if (sel.value) catMap[sel.dataset.q] = sel.value; });
+  const lid = topicsLinkId || 'primary';
   try {
-    const r = await api('/api/topics/' + topicsContestId, { method: 'POST', body: { map } });
-    await api('/api/question-categories/' + topicsContestId, { method: 'POST', body: { map: catMap } });
+    const r = await api('/api/topics/' + topicsContestId, { method: 'POST', body: { map, linkId: lid } });
+    await api('/api/question-categories/' + topicsContestId, { method: 'POST', body: { map: catMap, linkId: lid } });
     setStatus($('t-status'), `Saved ${r.count} topics and ${Object.keys(catMap).length} categories.`, 'ok');
     clearDashCache(topicsContestId);
     loadTopicVideos(); if (String(topicsContestId) === String(selectedContestId)) loadDashboard();
@@ -2160,15 +2354,21 @@ $('perf-topics').addEventListener('click', (e) => {
 function syncContest() {
   if (!selectedContestId) return setStatus($('dash-status'), 'Add or select a course first.', 'err');
   const ct = dashContests.find((c) => String(c.id) === String(selectedContestId));
-  if (!ct || !ct.slug) return setStatus($('dash-status'), 'This course has no link — delete and re-add it with a link.', 'err');
+  const links = getContestLinksFor(ct);
+  const activeLink = selectedLinkId === 'all' ? null : (links.find((l) => String(l.id) === String(selectedLinkId)) || links[0]);
+  if (selectedLinkId === 'all' ? !links.some((l) => l.slug) : (!activeLink || !activeLink.slug)) {
+    return setStatus($('dash-status'), 'This link has no HackerRank URL — save a link first.', 'err');
+  }
   $('sync-btn').disabled = true;
   $('dash-progress').classList.remove('hidden'); $('dash-prog-lab').textContent = 'Starting…'; $('dash-prog-fill').style.width = '0%';
-  setStatus($('dash-status'), `Syncing ${ct.name}…`, 'info');
+  const syncLabel = selectedLinkId === 'all' ? `${ct.name} (All links)` : (links.length > 1 && activeLink ? `${ct.name} — ${activeLink.label}` : ct.name);
+  setStatus($('dash-status'), `Syncing ${syncLabel}…`, 'info');
   const params = { adminToken, contestId: selectedContestId };
+  if (selectedLinkId) params.linkId = selectedLinkId;
   if (hrToken) params.hrToken = hrToken;
   const es = new EventSource('/api/scrape-stream?' + new URLSearchParams(params));
-  es.addEventListener('progress', (ev) => { const p = JSON.parse(ev.data); $('dash-prog-lab').textContent = p.phase === 'leaderboard' ? `Fetching leaderboard… ${p.completed}` : `${p.completed} / ${p.total} users`; $('dash-prog-fill').style.width = (p.total ? Math.round(p.completed / p.total * 100) : 8) + '%'; });
-  es.addEventListener('done', (ev) => { es.close(); $('sync-btn').disabled = false; $('dash-prog-fill').style.width = '100%'; const d = JSON.parse(ev.data); setStatus($('dash-status'), `Synced — ${d.summary.totalUsers} users, ${d.summary.totalQuestions} questions.`, 'ok'); clearDashCache(selectedContestId); loadDashboard(); });
+  es.addEventListener('progress', (ev) => { const p = JSON.parse(ev.data); $('dash-prog-lab').textContent = p.note || (p.phase === 'leaderboard' ? `Fetching leaderboard… ${p.completed}` : `${p.completed} / ${p.total} users`); $('dash-prog-fill').style.width = (p.total ? Math.round(p.completed / p.total * 100) : 8) + '%'; });
+  es.addEventListener('done', (ev) => { es.close(); $('sync-btn').disabled = false; $('dash-prog-fill').style.width = '100%'; const d = JSON.parse(ev.data); const msg = d.ok != null ? `Synced ${d.ok}/${d.total} link(s).` : `Synced — ${d.summary.totalUsers} users, ${d.summary.totalQuestions} questions.`; setStatus($('dash-status'), msg, 'ok'); clearDashCache(selectedContestId); loadDashboard(); });
   es.addEventListener('failed', (ev) => {
     es.close(); $('sync-btn').disabled = false; $('dash-progress').classList.add('hidden');
     const err = JSON.parse(ev.data).error || 'Sync failed';
