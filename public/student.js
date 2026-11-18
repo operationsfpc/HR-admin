@@ -42,33 +42,9 @@ async function onContinue() {
   const hrUsername = $('name-select').value;
   if (!hrUsername) return setStatus($('login-status'), 'Select your name.', 'err');
   if (!contests.length) return setStatus($('login-status'), 'No courses are assigned to you yet. Ask your admin.', 'err');
-  const rawVal = $('contest-select').value || `${contests[0].id}|primary`;
-  const [contestId, linkId = 'primary'] = String(rawVal).split('|');
-  cur = { college, code, hrUsername, contestId, linkId };
+  const contestId = $('contest-select').value || String(contests[0].id);
+  cur = { college, code, hrUsername, contestId };
   loadPractice();
-}
-
-function buildGroupedContestHtml(list) {
-  if (!list.length) return `<option value="">No courses assigned to you</option>`;
-  const groups = new Map();
-  for (const c of list) {
-    const k = (c.semester || '').trim() || 'Unassigned';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(c);
-  }
-  const opt = (c) => {
-    const links = Array.isArray(c.links) && c.links.length > 1 ? c.links : null;
-    if (links) {
-      return links.map((l) => `<option value="${c.id}|${esc(l.id)}">${esc(c.name)} — ${esc(l.label)}${c.isArchived ? ' [Archived]' : ''}</option>`).join('');
-    }
-    return `<option value="${c.id}|primary">${esc(c.name)}${c.isArchived ? ' [Archived]' : ''}</option>`;
-  };
-  if (groups.size > 1) {
-    const rank = (s) => (s === 'Even Sem (2026-27)' ? 0 : s === 'Odd Sem (2025-26)' ? 1 : s === 'Unassigned' ? 999 : 10);
-    const keys = Array.from(groups.keys()).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
-    return keys.map((k) => `<optgroup label="${esc(k)}">${groups.get(k).map(opt).join('')}</optgroup>`).join('');
-  }
-  return list.map(opt).join('');
 }
 
 // When the student picks their name, load only the contests mapped to them.
@@ -79,22 +55,17 @@ $('name-select').addEventListener('change', async (e) => {
   try {
     const d = await post('/api/student/contests', { college, accessCode: code, hrUsername });
     contests = d.contests || [];
-    $('contest-select').innerHTML = buildGroupedContestHtml(contests);
+    $('contest-select').innerHTML = contests.length ? contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('') : `<option value="">No courses assigned to you</option>`;
     $('contest-row').style.display = 'flex';
     setStatus($('login-status'), contests.length ? 'Pick your course, then Continue.' : 'No courses are assigned to you yet.', contests.length ? 'ok' : 'err');
   } catch (err) { setStatus($('login-status'), err.message, 'err'); }
 });
 
 async function loadPractice() {
-  try { render(await post('/api/student/practice', { college: cur.college, accessCode: cur.code, hrUsername: cur.hrUsername, contestId: cur.contestId, linkId: cur.linkId })); }
+  try { render(await post('/api/student/practice', { college: cur.college, accessCode: cur.code, hrUsername: cur.hrUsername, contestId: cur.contestId })); }
   catch (e) { setStatus($('login-status'), e.message, 'err'); }
 }
-$('sv-contest-switch').addEventListener('change', (e) => {
-  const [contestId, linkId = 'primary'] = String(e.target.value || '').split('|');
-  cur.contestId = contestId;
-  cur.linkId = linkId;
-  loadPractice();
-});
+$('sv-contest-switch').addEventListener('change', (e) => { cur.contestId = e.target.value; loadPractice(); });
 
 function render(d) {
   const college = cur.college, hrUsername = cur.hrUsername;
@@ -103,9 +74,8 @@ function render(d) {
   const me = students.find((s) => s.hrUsername === hrUsername);
   const who = $('who'); who.textContent = `${me?.name || hrUsername}`; who.classList.remove('hidden');
   $('logout-btn2').classList.remove('hidden');
-  $('sv-contest-switch').innerHTML = buildGroupedContestHtml(contests);
-  const desiredVal = `${cur.contestId}|${cur.linkId || 'primary'}`;
-  if (Array.from($('sv-contest-switch').options).some((o) => o.value === desiredVal)) $('sv-contest-switch').value = desiredVal;
+  $('sv-contest-switch').innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  if (contests.some((c) => String(c.id) === String(cur.contestId))) $('sv-contest-switch').value = cur.contestId;
 
   topicVideos = d.topicVideos || {};
   const qs = d.questions || [];

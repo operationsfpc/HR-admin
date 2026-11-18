@@ -21,51 +21,14 @@ CREATE TABLE IF NOT EXISTS hackerrank.students (
 );
 CREATE TABLE IF NOT EXISTS hackerrank.contests (
   id bigint generated always as identity primary key,
-  college text, name text, contest_url text, slug text, share_token text,
-  semester text NOT NULL DEFAULT '',
-  primary_label text NOT NULL DEFAULT '',
-  is_archived boolean NOT NULL DEFAULT false,
-  created_at timestamptz default now()
+  college text, name text, contest_url text, slug text, share_token text, created_at timestamptz default now()
 );
-ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS semester text NOT NULL DEFAULT '';
-ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS primary_label text NOT NULL DEFAULT '';
-ALTER TABLE hackerrank.contests ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false;
-
-CREATE TABLE IF NOT EXISTS hackerrank.contest_links (
-  id bigint generated always as identity primary key,
-  contest_id bigint NOT NULL,
-  label text NOT NULL DEFAULT '',
-  contest_url text NOT NULL DEFAULT '',
-  slug text NOT NULL DEFAULT '',
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS hackerrank.contest_students (
   contest_id bigint, username_key text, primary key(contest_id, username_key)
 );
 CREATE TABLE IF NOT EXISTS hackerrank.scrapes (
   id bigint generated always as identity primary key,
   slug text, contest_name text, total_users int, total_questions int, payload jsonb, created_at timestamptz default now()
-);
-CREATE TABLE IF NOT EXISTS hackerrank.student_progress (
-  slug text NOT NULL,
-  username_key text NOT NULL,
-  question text NOT NULL,
-  points numeric NOT NULL DEFAULT 0,
-  max_score numeric NOT NULL DEFAULT 0,
-  solved boolean NOT NULL DEFAULT false,
-  attempted boolean NOT NULL DEFAULT false,
-  first_solved_at timestamptz,
-  last_synced_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (slug, username_key, question)
-);
-CREATE TABLE IF NOT EXISTS hackerrank.daily_progress (
-  slug text NOT NULL,
-  day date NOT NULL,
-  username_key text NOT NULL,
-  solved_count int NOT NULL DEFAULT 0,
-  score numeric NOT NULL DEFAULT 0,
-  PRIMARY KEY (slug, day, username_key)
 );
 CREATE TABLE IF NOT EXISTS hackerrank.topics (slug text, question text, topic text, primary key(slug, question));
 CREATE TABLE IF NOT EXISTS hackerrank.topic_videos (slug text, topic text, video_url text, primary key(slug, topic));

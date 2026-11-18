@@ -7,7 +7,7 @@
   <title>Course Dashboard</title>
   <link rel="icon"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
-  <link rel="stylesheet" href="/styles.css?v=8" />
+  <link rel="stylesheet" href="/styles.css?v=5" />
 </head>
 
 <body>
@@ -19,26 +19,19 @@
   </header>
 
   <main class="container">
-    <div class="view-header-card">
-      <div class="view-header-top">
-        <h2 id="view-title"></h2>
-        <div class="toolbar-group">
-          <button id="view-sync-btn" class="sm" title="Sync latest data from HackerRank">⟳ Sync now</button>
-          <button id="view-sync-all-btn" class="ghost sm hidden" title="Sync all courses for this college">⟳ Sync all courses</button>
-          <button id="view-export-college-btn" class="ghost sm hidden" title="Download formatted Excel report for all courses in this college (respects semester filter)">⬇ Export College Excel</button>
-        </div>
-      </div>
-      <div id="view-selectors-row" class="view-header-selectors hidden">
-        <label id="view-sem-wrap" class="inline-label hidden">Semester <select id="view-sem"></select></label>
-        <label id="view-contest-wrap" class="inline-label hidden">Course <select id="view-contest"></select></label>
-        <label id="view-link-wrap" class="inline-label hidden">Link / Label <select id="view-link"></select></label>
-      </div>
-      <div id="view-progress" class="progress hidden" style="margin-bottom:4px">
-        <div class="lab" id="view-prog-lab"></div>
-        <div class="bar"><span id="view-prog-fill" style="width:0%"></span></div>
-      </div>
-      <div id="view-status" class="status" style="margin-top:6px"></div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 6px">
+      <h2 id="view-title" style="margin:0"></h2>
+      <label id="view-contest-wrap" class="inline-label hidden" style="margin:0">Course: <select
+          id="view-contest"></select></label>
+      <button id="view-sync-btn" class="sm" title="Sync latest data from HackerRank">⟳ Sync now</button>
+      <button id="view-sync-all-btn" class="ghost sm hidden" title="Sync all courses for this college">⟳ Sync all
+        courses</button>
     </div>
+    <div id="view-progress" class="progress hidden" style="margin-bottom:8px">
+      <div class="lab" id="view-prog-lab"></div>
+      <div class="bar"><span id="view-prog-fill" style="width:0%"></span></div>
+    </div>
+    <div id="view-status" class="status" style="margin-top:0"></div>
 
     <nav class="tabs" id="view-tabs" style="margin:10px 0 18px;border-bottom:1px solid var(--border)">
       <button class="tab active" data-vtab="dashboard">Dashboard</button>
@@ -96,18 +89,28 @@
 
       <div class="card">
         <div class="card-head">
-          <h3 style="margin:0">Students</h3>
-          <div class="toolbar-group">
-            <button id="add-student-btn" class="sm" title="Add a new student">＋ Add Student</button>
-            <button id="view-export-btn" class="ghost sm" title="Download formatted multi-sheet Excel report for the current course & link filter">⬇ Export Excel</button>
+          <div style="display:flex;align-items:center;gap:10px">
+            <h3 style="margin:0">Students</h3>
+            <button id="add-student-btn" class="primary sm" title="Add a new student"
+              style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+              <span style="font-size:1.05rem;line-height:1;margin-top:-1px">＋</span> Add Student
+            </button>
           </div>
-        </div>
-        <div class="filter-bar">
-          <select id="f-campus"><option value="">All campuses</option></select>
-          <select id="f-department"><option value="">All departments</option></select>
-          <select id="f-section"><option value="">All sections</option></select>
-          <select id="f-year"><option value="">All years</option></select>
-          <input id="f-search" placeholder="Search name / username…" />
+          <div class="form-row" style="margin:0">
+            <select id="f-campus">
+              <option value="">All campuses</option>
+            </select>
+            <select id="f-department">
+              <option value="">All departments</option>
+            </select>
+            <select id="f-section">
+              <option value="">All sections</option>
+            </select>
+            <select id="f-year">
+              <option value="">All years</option>
+            </select>
+            <input id="f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
+          </div>
         </div>
         <div class="table-scroll">
           <table id="students-table" class="data-table"></table>
@@ -119,16 +122,24 @@
     <div id="tab-daily" class="hidden">
       <div class="card">
         <div class="card-head">
-          <h3 style="margin:0">Daily questions completed <span class="muted" id="daily-note"></span></h3>
+          <h3>Daily questions completed <span class="muted" id="daily-note"></span></h3>
         </div>
-        <p class="muted" style="margin:0 0 10px">Questions each student completed per day over the <b>last 10 days</b>, ending today. Days with
+        <p class="muted">Questions each student completed per day over the <b>last 10 days</b>, ending today. Days with
           no sync show a dot (no change recorded). Click any day's count to see who completed questions.</p>
-        <div class="filter-bar">
-          <select id="daily-f-campus"><option value="">All campuses</option></select>
-          <select id="daily-f-department"><option value="">All departments</option></select>
-          <select id="daily-f-section"><option value="">All sections</option></select>
-          <select id="daily-f-year"><option value="">All years</option></select>
-          <input id="daily-f-search" placeholder="Search name / username…" />
+        <div class="form-row" style="margin:0 0 8px">
+          <select id="daily-f-campus">
+            <option value="">All campuses</option>
+          </select>
+          <select id="daily-f-department">
+            <option value="">All departments</option>
+          </select>
+          <select id="daily-f-section">
+            <option value="">All sections</option>
+          </select>
+          <select id="daily-f-year">
+            <option value="">All years</option>
+          </select>
+          <input id="daily-f-search" placeholder="Search name / username…" style="flex:0 0 200px" />
         </div>
         <div class="table-scroll">
           <table id="daily-table" class="data-table"></table>
@@ -217,11 +228,7 @@
   <div id="perf-modal" class="modal-overlay hidden">
     <div class="modal wide">
       <div class="card-head">
-        <h3 id="perf-title"></h3>
-        <div class="form-row" style="margin:0;gap:6px">
-          <button id="perf-export-btn" class="ghost sm hidden" title="Download this student's complete progress Excel report">⬇ Export Student Excel</button>
-          <button id="perf-close" class="ghost sm" title="Close">✕</button>
-        </div>
+        <h3 id="perf-title"></h3><button id="perf-close" class="ghost sm" title="Close">✕</button>
       </div>
       <div id="perf-meta" class="muted"></div>
       <div id="perf-stats"></div>
@@ -385,8 +392,8 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=11"></script>
-  <script src="/view.js?v=11"></script>
+  <script src="/theme.js?v=6"></script>
+  <script src="/view.js?v=6"></script>
 </body>
 
 </html>

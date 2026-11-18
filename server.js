@@ -5,7 +5,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { login, createJar, parseContestSlug, fetchAllLeaderboard, buildMatrix } from './lib/hackerrank.js';
 import { buildMockDashboard } from './lib/mock.js';
-import { buildCourseWorkbook, buildCollegeWorkbook, buildStudentWorkbook } from './lib/excel-export.js';
 import * as db from './lib/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -152,140 +151,33 @@ app.put('/api/colleges/:id', requireAdmin, async (req, res) => {
 });
 app.delete('/api/colleges/:id', requireAdmin, async (req, res) => { try { res.json({ ok: await db.deleteCollege(req.params.id) }); } catch (e) { res.status(500).json({ error: e.message }); } });
 
-// ---------------- Contests (many per college, semester-organized) ----------------
+// ---------------- Contests (many per college) ----------------
 app.get('/api/contests', requireAdmin, async (req, res) => {
   try {
     let college;
     if (req.query.collegeId) { const c = (await db.listColleges()).find((x) => String(x.id) === String(req.query.collegeId)); college = c?.name; }
     else if (req.query.college) college = String(req.query.college);
-    const semester = req.query.semester ? String(req.query.semester).trim() : undefined;
-    const includeArchived = req.query.includeArchived !== 'false';
-    res.json({ contests: await db.listContests(college, { semester, includeArchived }) });
+    res.json({ contests: await db.listContests(college) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/contests', requireAdmin, async (req, res) => {
   try {
-    const { collegeId, name, contestUrl, semester } = req.body || {};
+    const { collegeId, name, contestUrl } = req.body || {};
     const col = (await db.listColleges()).find((x) => String(x.id) === String(collegeId));
     if (!col) return res.status(400).json({ error: 'College not found.' });
-    const c = await db.addContest({
-      college: col.name,
-      name,
-      contestUrl: contestUrl || '',
-      slug: slugFromUrl(contestUrl),
-      semester: semester || '',
-    });
+    const c = await db.addContest({ college: col.name, name, contestUrl: contestUrl || '', slug: slugFromUrl(contestUrl) });
     res.json({ ok: true, contest: c });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.put('/api/contests/:id', requireAdmin, async (req, res) => {
   try {
-    const { name, contestUrl, semester, primaryLabel, isArchived, force } = req.body || {};
-    const cur = await db.getContest(req.params.id);
-    if (!cur) return res.status(404).json({ error: 'Course not found.' });
+    const { name, contestUrl } = req.body || {};
     const fields = {};
     if (name !== undefined) fields.name = name;
-    if (semester !== undefined) fields.semester = semester;
-    if (primaryLabel !== undefined) fields.primaryLabel = primaryLabel;
-    if (isArchived !== undefined) fields.isArchived = !!isArchived;
-    if (contestUrl !== undefined) {
-      const nextSlug = slugFromUrl(contestUrl);
-      if (cur.slug && nextSlug !== cur.slug && !force && (await db.hasScrapeData(cur.slug))) {
-        return res.status(409).json({
-          code: 'PROGRESS_EXISTS',
-          existingSlug: cur.slug,
-          error: `This course already has saved progress for "${cur.slug}". Add another labeled link to this course instead of overwriting this link.`,
-        });
-      }
-      fields.contestUrl = contestUrl;
-      fields.slug = nextSlug;
-    }
+    if (contestUrl !== undefined) { fields.contestUrl = contestUrl; fields.slug = slugFromUrl(contestUrl); }
     const c = await db.updateContest(req.params.id, fields);
-    res.json({ ok: true, contest: c });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.put('/api/contests/:id/archive', requireAdmin, async (req, res) => {
-  try {
-    const isArchived = req.body?.isArchived !== false;
-    const c = await db.archiveContest(req.params.id, isArchived);
     if (!c) return res.status(404).json({ error: 'Course not found.' });
     res.json({ ok: true, contest: c });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-// Additional labeled contest links attached to an existing course
-app.get('/api/contests/:id/links', requireAdmin, async (req, res) => {
-  try {
-    const c = await db.getContest(req.params.id);
-    if (!c) return res.status(404).json({ error: 'Course not found.' });
-    res.json({ contest: c, links: c.links || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/contests/:id/links', requireAdmin, async (req, res) => {
-  try {
-    const c = await db.getContest(req.params.id);
-    if (!c) return res.status(404).json({ error: 'Course not found.' });
-    const { label, contestUrl } = req.body || {};
-    const slug = slugFromUrl(contestUrl);
-    if (!slug) return res.status(400).json({ error: 'Paste a valid HackerRank contest link.' });
-    const link = await db.addContestLink({ contestId: c.id, label, contestUrl: String(contestUrl || '').trim(), slug });
-    const updated = await db.getContest(c.id);
-    res.json({ ok: true, link, contest: updated, links: updated.links || [] });
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
-app.put('/api/contests/:id/links/:linkId', requireAdmin, async (req, res) => {
-  try {
-    const c = await db.getContest(req.params.id);
-    if (!c) return res.status(404).json({ error: 'Course not found.' });
-    const { label, contestUrl, force } = req.body || {};
-    if (req.params.linkId === 'primary') {
-      const fields = {};
-      if (label !== undefined) fields.primaryLabel = label;
-      if (contestUrl !== undefined) {
-        const nextSlug = slugFromUrl(contestUrl);
-        if (c.slug && nextSlug !== c.slug && !force && (await db.hasScrapeData(c.slug))) {
-          return res.status(409).json({
-            code: 'PROGRESS_EXISTS',
-            existingSlug: c.slug,
-            error: `The primary link already has saved progress for "${c.slug}". Add another labeled link instead of overwriting it.`,
-          });
-        }
-        fields.contestUrl = contestUrl;
-        fields.slug = nextSlug;
-      }
-      const updated = await db.updateContest(c.id, fields);
-      return res.json({ ok: true, contest: updated, links: updated.links || [] });
-    }
-    const cur = await db.getContestLink(req.params.linkId);
-    if (!cur || cur.contestId !== c.id) return res.status(404).json({ error: 'Link not found for this course.' });
-    const fields = {};
-    if (label !== undefined) fields.label = label;
-    if (contestUrl !== undefined) {
-      const nextSlug = slugFromUrl(contestUrl);
-      if (cur.slug && nextSlug !== cur.slug && !force && (await db.hasScrapeData(cur.slug))) {
-        return res.status(409).json({
-          code: 'PROGRESS_EXISTS',
-          existingSlug: cur.slug,
-          error: `Link "${cur.label}" already has saved progress for "${cur.slug}". Add a new labeled link instead of overwriting it.`,
-        });
-      }
-      fields.contestUrl = contestUrl;
-      fields.slug = nextSlug;
-    }
-    await db.updateContestLink(cur.id, fields);
-    const updated = await db.getContest(c.id);
-    res.json({ ok: true, contest: updated, links: updated.links || [] });
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
-app.delete('/api/contests/:id/links/:linkId', requireAdmin, async (req, res) => {
-  try {
-    const c = await db.getContest(req.params.id);
-    if (!c) return res.status(404).json({ error: 'Course not found.' });
-    if (req.params.linkId === 'primary') return res.status(400).json({ error: 'Cannot delete the primary course link.' });
-    const cur = await db.getContestLink(req.params.linkId);
-    if (!cur || cur.contestId !== c.id) return res.status(404).json({ error: 'Link not found for this course.' });
-    await db.deleteContestLink(cur.id);
-    const updated = await db.getContest(c.id);
-    res.json({ ok: true, contest: updated, links: updated.links || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.delete('/api/contests/:id', requireAdmin, async (req, res) => { try { res.json({ ok: await db.deleteContest(req.params.id) }); } catch (e) { res.status(500).json({ error: e.message }); } });
@@ -641,148 +533,14 @@ async function streamSingleContestScrape({ session, contest, send, isAborted }) 
   send('done', { ...saved, summary: dash.summary, contest: dash.contest, source, capped });
 }
 
-// ---------------- Multi-link Course Helpers ----------------
-function getEffectiveLinks(contest) {
-  if (!contest) return [];
-  if (Array.isArray(contest.links) && contest.links.length) return contest.links;
-  return [{
-    id: 'primary',
-    contestId: contest.id,
-    label: contest.primaryLabel || contest.semester || 'Main',
-    contestUrl: contest.contestUrl || '',
-    slug: contest.slug || '',
-    isPrimary: true,
-  }];
-}
-
-function resolveSelectedLink(contest, linkId) {
-  const links = getEffectiveLinks(contest);
-  const reqId = String(linkId || '').trim();
-  if (reqId === 'all' && links.length > 1) {
-    return { mode: 'all', link: null, links, activeLinkId: 'all' };
-  }
-  if (reqId && reqId !== 'all') {
-    const found = links.find((l) => String(l.id) === reqId);
-    if (found) return { mode: 'single', link: found, links, activeLinkId: String(found.id) };
-  }
-  const first = links[0] || null;
-  return { mode: 'single', link: first, links, activeLinkId: first ? String(first.id) : 'primary' };
-}
-
-function expandScrapeJobs(contests) {
-  const jobs = [];
-  for (const c of contests) {
-    const links = getEffectiveLinks(c).filter((l) => l.slug);
-    for (const l of links) {
-      const displayName = links.length > 1 ? `${c.name} [${l.label}]` : c.name;
-      jobs.push({ ...c, slug: l.slug, contestUrl: l.contestUrl, name: displayName, linkLabel: l.label });
-    }
-  }
-  return jobs;
-}
-
-async function loadCombinedContestData(contest, links) {
-  const validLinks = links.filter((l) => l.slug);
-  const perLink = await Promise.all(validLinks.map(async (l) => {
-    const [dash, topics, categories, topicVideos] = await Promise.all([
-      cachedLatestScrape(l.slug),
-      db.getTopics(l.slug),
-      db.getQuestionCategories(l.slug),
-      db.getTopicVideos(l.slug),
-    ]);
-    return { link: l, dash, topics, categories, topicVideos };
-  }));
-  const synced = perLink.filter((x) => x.dash);
-  if (!synced.length) return { dash: null, topics: {}, categories: {}, topicVideos: {} };
-
-  const questions = [];
-  const topics = {};
-  const categories = {};
-  const topicVideos = {};
-  const usersByKey = new Map();
-
-  for (const item of synced) {
-    const prefix = `[${item.link.label}] `;
-    const qList = item.dash.questions || [];
-    for (const q of qList) {
-      const qKey = prefix + q.name;
-      questions.push({ ...q, name: qKey });
-      topics[qKey] = resolveTopic(item.topics, q.name);
-      if (item.categories[q.name]) categories[qKey] = item.categories[q.name];
-    }
-    for (const [t, vids] of Object.entries(item.topicVideos || {})) {
-      if (!topicVideos[t]) topicVideos[t] = [];
-      for (const v of vids) if (!topicVideos[t].includes(v)) topicVideos[t].push(v);
-    }
-    for (const u of (item.dash.users || [])) {
-      const uk = String(u.username || '').toLowerCase();
-      if (!uk) continue;
-      let rec = usersByKey.get(uk);
-      if (!rec) {
-        rec = { username: u.username, rank: null, computedScore: 0, solved: 0, attempted: 0, questionStatus: {} };
-        usersByKey.set(uk, rec);
-      }
-      for (const q of qList) {
-        const qKey = prefix + q.name;
-        const st = u.questionStatus?.[q.name] || { score: 0, points: q.points || 0, attempted: false, solved: false };
-        rec.questionStatus[qKey] = st;
-        if (st.solved) rec.solved++;
-        if (st.attempted) rec.attempted++;
-        rec.computedScore += Number(st.score || 0);
-      }
-    }
-  }
-  // Ensure every user has entries for every question across all links
-  const users = Array.from(usersByKey.values());
-  for (const u of users) {
-    for (const q of questions) {
-      if (!u.questionStatus[q.name]) u.questionStatus[q.name] = { score: 0, points: q.points || 0, attempted: false, solved: false };
-    }
-  }
-  const totalSolves = users.reduce((a, u) => a + u.solved, 0);
-  const qc = questions.length;
-  return {
-    dash: {
-      contest: { slug: contest.slug, name: `${contest.name} (All Links)`, challengesCount: qc },
-      summary: {
-        totalUsers: users.length,
-        totalQuestions: qc,
-        avgSolved: users.length ? +(totalSolves / users.length).toFixed(2) : 0,
-        overallCompletion: users.length && qc ? Math.round((totalSolves / (users.length * qc)) * 100) : 0,
-      },
-      questions,
-      users,
-    },
-    topics,
-    categories,
-    topicVideos,
-  };
-}
-
-async function loadContestViewData(contest, linkId) {
-  const sel = resolveSelectedLink(contest, linkId);
-  if (sel.mode === 'all') {
-    const combined = await loadCombinedContestData(contest, sel.links);
-    return { ...combined, links: sel.links, activeLinkId: 'all', activeLink: null };
-  }
-  const slug = sel.link?.slug || '';
-  const [dash, topics, categories, topicVideos] = await Promise.all([
-    slug ? cachedLatestScrape(slug) : null,
-    slug ? db.getTopics(slug) : {},
-    slug ? db.getQuestionCategories(slug) : {},
-    slug ? db.getTopicVideos(slug) : {},
-  ]);
-  return { dash, topics, categories, topicVideos, links: sel.links, activeLinkId: sel.activeLinkId, activeLink: sel.link };
-}
-
-// Scrape a college's contest (one link or all links of the course) with live progress (SSE).
+// Scrape a college's contest with live progress (SSE).
 app.get('/api/scrape-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders?.();
   const send = (ev, d) => res.write(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`);
   let aborted = false; req.on('close', () => { aborted = true; });
   try {
-    const { adminToken, hrToken, contestId, linkId } = req.query;
+    const { adminToken, hrToken, contestId } = req.query;
     if (!adminToken || (!verifyAdminToken(adminToken) && !adminTokens.has(adminToken))) { send('failed', { error: 'Admin auth required.' }); return res.end(); }
     let session = hrSessions.get(hrToken);
     if (!session) {
@@ -790,28 +548,14 @@ app.get('/api/scrape-stream', async (req, res) => {
       catch (e) { send('failed', { error: e.message || 'Connect your HackerRank account first or configure HR_EMAIL/HR_PASS in .env.' }); return res.end(); }
     }
     const ct = await db.getContest(contestId);
-    if (!ct) { send('failed', { error: 'Course not found.' }); return res.end(); }
-    const sel = resolveSelectedLink(ct, linkId);
-    if (sel.mode === 'all') {
-      const jobs = expandScrapeJobs([ct]);
-      if (!jobs.length) { send('failed', { error: 'Course has no links.' }); return res.end(); }
-      let ok = 0; const failures = [];
-      for (let i = 0; i < jobs.length && !aborted; i++) {
-        const j = jobs[i];
-        send('progress', { phase: 'comparing', completed: i, total: jobs.length, note: `Syncing ${j.linkLabel} (${i + 1}/${jobs.length})…` });
-        try { await scrapeAndSave(session, j, (c, t) => { if (!aborted) send('progress', { phase: 'comparing', completed: c, total: t, note: `[${j.linkLabel}] ${c}/${t}` }); }); ok++; }
-        catch (e) { failures.push(`${j.linkLabel}: ${e.message}`); }
-      }
-      if (!aborted) send('done', { summary: { totalUsers: ok, totalQuestions: jobs.length }, ok, total: jobs.length, failures });
-      return res.end();
-    }
-    if (!sel.link || !sel.link.slug) { send('failed', { error: 'Selected link has no HackerRank URL.' }); return res.end(); }
-    await streamSingleContestScrape({ session, contest: { ...ct, slug: sel.link.slug, contestUrl: sel.link.contestUrl }, send, isAborted: () => aborted });
+    if (!ct || !ct.slug) { send('failed', { error: 'Course has no link.' }); return res.end(); }
+    await streamSingleContestScrape({ session, contest: ct, send, isAborted: () => aborted });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
 });
 
-// Sync EVERY contest & attached link across EVERY active college.
+// Sync EVERY contest across EVERY college, using the admin's connected
+// HackerRank session. Streams per-contest progress; one failure doesn't stop the run.
 app.get('/api/sync-all-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders?.();
@@ -825,16 +569,16 @@ app.get('/api/sync-all-stream', async (req, res) => {
       try { session = await getEnvHrSession(); }
       catch (e) { send('failed', { error: e.message || 'Connect your HackerRank account first or configure HR_EMAIL/HR_PASS in .env.' }); return res.end(); }
     }
-    const contests = await db.listContests(undefined, { includeArchived: false });
-    const jobs = expandScrapeJobs(contests);
-    if (!jobs.length) { send('failed', { error: 'No contests have a HackerRank link yet.' }); return res.end(); }
-    send('start', { total: jobs.length });
+    const contests = (await db.listContests()).filter((c) => c.slug);
+    if (!contests.length) { send('failed', { error: 'No contests have a HackerRank link yet.' }); return res.end(); }
+    send('start', { total: contests.length });
     let ok = 0; const failures = [];
-    for (let i = 0; i < jobs.length && !aborted; i++) {
-      const c = jobs[i];
-      const at = { index: i + 1, total: jobs.length, name: c.name, college: c.college };
+    for (let i = 0; i < contests.length && !aborted; i++) {
+      const c = contests[i];
+      const at = { index: i + 1, total: contests.length, name: c.name, college: c.college };
       send('contest', at);
       try {
+        // NB: `total` here is the user count — keep it distinct from at.total (contest count).
         const r = await scrapeAndSave(session, c, (completed, total) => { if (!aborted) send('progress', { ...at, completed, totalUsers: total }); });
         ok++; send('contest-done', { ...at, users: r.users });
       } catch (e) {
@@ -842,7 +586,7 @@ app.get('/api/sync-all-stream', async (req, res) => {
         send('contest-failed', { ...at, error: e.message });
       }
     }
-    if (!aborted) send('done', { ok, total: jobs.length, failures });
+    if (!aborted) send('done', { ok, total: contests.length, failures });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
 });
@@ -851,219 +595,38 @@ app.get('/api/sync-all-stream', async (req, res) => {
 function titleTag(name) { const m = String(name).split(/\s+[–—-]\s+/); return m.length >= 2 ? m[0].trim() : ''; }
 function resolveTopic(saved, name) { return (saved && saved[name]) || titleTag(name) || 'Other'; }
 
-// Latest scrape for a contest (admin) — supports ?linkId=primary|<id>|all.
+// Latest scrape for a contest (admin) — used by the dashboard students table.
 app.get('/api/contest-dashboard/:contestId', requireAdmin, async (req, res) => {
   try {
     const contest = await db.getContest(req.params.contestId);
     if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    const [view, students] = await Promise.all([
-      loadContestViewData(contest, req.query.linkId),
+    const [dash, topics, categories, students] = await Promise.all([
+      contest.slug ? cachedLatestScrape(contest.slug) : null,
+      contest.slug ? db.getTopics(contest.slug) : {},
+      contest.slug ? db.getQuestionCategories(contest.slug) : {},
       db.listStudentsForContest(contest.id),
     ]);
-    res.json({
-      contest,
-      college: contest.college,
-      dashboard: view.dash,
-      topics: view.topics,
-      categories: view.categories,
-      links: view.links,
-      activeLinkId: view.activeLinkId,
-      students,
-    });
+    res.json({ contest, college: contest.college, dashboard: dash, topics, categories, students });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ---------------- Formatted Excel Exports (Admin + Read-Only Shared) ----------------
-function cleanFilename(s) {
-  return String(s || 'report').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'report';
-}
-function requestOrigin(req) {
-  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
-  const host = req.get('x-forwarded-host') || req.get('host') || '';
-  return host ? `${proto}://${host}` : '';
-}
-function sendXlsx(res, buf, filename) {
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${cleanFilename(filename)}.xlsx"`);
-  res.setHeader('Cache-Control', 'no-store');
-  res.send(buf);
-}
-async function loadLinkExportData(contest, link, studentsOverride = null) {
-  const slug = link?.slug || '';
-  const [dash, topics, categories, students, prog] = await Promise.all([
-    slug ? cachedLatestScrape(slug) : null,
-    slug ? db.getTopics(slug) : {},
-    slug ? db.getQuestionCategories(slug) : {},
-    studentsOverride !== null ? Promise.resolve(studentsOverride) : db.listStudentsForContest(contest.id),
-    slug ? db.getStudentProgressMap(slug) : { firstSolved: new Map() },
-  ]);
-  const multi = getEffectiveLinks(contest).length > 1;
-  const virtualContest = multi
-    ? { ...contest, name: `${contest.name} — ${link.label}`, semester: link.label || contest.semester, slug: link.slug, contestUrl: link.contestUrl }
-    : { ...contest, semester: contest.semester || (link?.label !== 'Main' ? link?.label : '') };
-  return { contest: virtualContest, dash, topics, categories, students, firstSolvedMap: prog.firstSolved };
-}
-function semFromLinkLabel(label) {
-  const m = String(label || '').trim().match(/^(Sem\s*\d+)/i);
-  return m ? ('Sem ' + m[1].replace(/\D+/g, '')) : '';
-}
-async function expandContestExportData(contest, studentsOverride = null, semesterFilter = '') {
-  const links = getEffectiveLinks(contest);
-  const out = [];
-  for (const l of links) {
-    if (semesterFilter) {
-      const linkSem = semFromLinkLabel(l.label) || String(contest.semester || '').trim();
-      if (linkSem.toLowerCase() !== semesterFilter.toLowerCase()) continue;
-    }
-    out.push(await loadLinkExportData(contest, l, studentsOverride));
-  }
-  return out;
-}
-function filterStudentsByQuery(students, query = {}) {
-  const { campus = '', department = '', section = '', year = '', q = '' } = query;
-  const ql = String(q || '').trim().toLowerCase();
-  const filtered = (students || []).filter((s) =>
-    (!campus || s.campus === campus) &&
-    (!department || s.department === department) &&
-    (!section || s.section === section) &&
-    (!year || s.year === year) &&
-    (!ql || (s.name || '').toLowerCase().includes(ql) || (s.hrUsername || '').toLowerCase().includes(ql) || (s.registerNo || '').toLowerCase().includes(ql))
-  );
-  const filterParts = [
-    campus && `Campus=${campus}`,
-    department && `Dept=${department}`,
-    section && `Sec=${section}`,
-    year && `Year=${year}`,
-    ql && `Search="${q}"`,
-  ].filter(Boolean);
-  return { filtered, filterSummary: filterParts.join(', ') };
-}
-async function exportSingleCourseResponse({ contest, linkId, query, origin, res }) {
-  const sel = resolveSelectedLink(contest, linkId);
-  const baseStudents = await db.listStudentsForContest(contest.id);
-  const { filtered, filterSummary } = filterStudentsByQuery(baseStudents, query);
-
-  if (sel.mode === 'all' && sel.links.length > 1) {
-    const coursesData = [];
-    for (const l of sel.links) coursesData.push(await loadLinkExportData(contest, l, filtered));
-    if (!coursesData.some((d) => d.dash)) {
-      return res.status(400).json({ error: 'No synced results for this course yet — sync first, then export.' });
-    }
-    const shareUrl = contest.shareToken && origin ? `${origin}/view/${contest.shareToken}` : '';
-    const buf = await buildCollegeWorkbook({
-      collegeName: `${contest.college} — ${contest.name}`,
-      collegeShareUrl: shareUrl,
-      semesterFilter: filterSummary ? `All Links (${filterSummary})` : 'All Links',
-      coursesData,
-      allStudents: filtered,
-      shareOrigin: origin,
-    });
-    return sendXlsx(res, buf, `${contest.college}_${contest.name}_All_Links_Report`);
-  }
-
-  const data = await loadLinkExportData(contest, sel.link, filtered);
-  if (!data.dash) return res.status(400).json({ error: 'No synced results for this link yet — sync first, then export.' });
-  const buf = await buildCourseWorkbook({
-    collegeName: contest.college,
-    contest: data.contest,
-    dash: data.dash,
-    students: filtered,
-    topics: data.topics,
-    categories: data.categories,
-    firstSolvedMap: data.firstSolvedMap,
-    shareOrigin: origin,
-    filterSummary,
-  });
-  const tag = sel.links.length > 1 && sel.link?.label ? `${sel.link.label}_` : (contest.semester ? `${contest.semester}_` : '');
-  return sendXlsx(res, buf, `${contest.college}_${tag}${contest.name}_report`);
-}
-
-// Single course styled workbook (supports ?linkId=primary|<id>|all + student filters).
-app.get('/api/export/course/:contestId', requireAdmin, async (req, res) => {
-  try {
-    const contest = await db.getContest(req.params.contestId);
-    if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    await exportSingleCourseResponse({ contest, linkId: req.query.linkId, query: req.query, origin: requestOrigin(req), res });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// College-wide or semester-scoped multi-course styled workbook (includes all labeled links).
-app.get('/api/export/college/:collegeId', requireAdmin, async (req, res) => {
-  try {
-    const colleges = await db.listColleges();
-    const college = colleges.find((c) => String(c.id) === String(req.params.collegeId));
-    if (!college) return res.status(404).json({ error: 'College not found.' });
-
-    const semesterFilter = req.query.semester ? String(req.query.semester).trim() : '';
-    const includeArchived = req.query.includeArchived !== 'false';
-    const [allStudents, contests] = await Promise.all([
-      db.listStudents({ college: college.name }),
-      db.listContests(college.name, { includeArchived }),
-    ]);
-
-    const coursesData = [];
-    for (const ct of contests) {
-      coursesData.push(...(await expandContestExportData(ct, null, semesterFilter)));
-    }
-
-    const origin = requestOrigin(req);
-    const collegeShareUrl = college.shareToken && origin ? `${origin}/college/${college.shareToken}` : '';
-    const buf = await buildCollegeWorkbook({
-      collegeName: college.name,
-      collegeShareUrl,
-      semesterFilter,
-      coursesData,
-      allStudents,
-      shareOrigin: origin,
-    });
-    const semPart = semesterFilter ? `_${semesterFilter}` : '_All_Semesters';
-    sendXlsx(res, buf, `${college.name}${semPart}_Completion_Report`);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Individual student complete progress transcript across all semesters, courses & labeled links.
-app.get('/api/export/student/:studentId', requireAdmin, async (req, res) => {
-  try {
-    const student = await db.getStudent(req.params.studentId);
-    if (!student) return res.status(404).json({ error: 'Student not found.' });
-    const contests = await db.listContestsForStudent(student.college, student.usernameKey || student.hrUsername);
-    const coursesData = [];
-    for (const ct of contests) {
-      coursesData.push(...(await expandContestExportData(ct, [student])));
-    }
-    const buf = await buildStudentWorkbook({
-      student,
-      coursesData,
-      shareOrigin: requestOrigin(req),
-    });
-    const who = student.registerNo ? `${student.name}_${student.registerNo}` : (student.name || student.hrUsername);
-    sendXlsx(res, buf, `${who}_Progress_Report`);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Topics editor (admin): list questions + current topics for a contest (supports ?linkId=).
+// Topics editor (admin): list questions + current topics for a contest.
 app.get('/api/topics/:contestId', requireAdmin, async (req, res) => {
   try {
     const contest = await db.getContest(req.params.contestId);
     if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    const sel = resolveSelectedLink(contest, req.query.linkId);
-    const activeLink = sel.link || sel.links[0] || null;
-    const slug = activeLink?.slug || '';
-    const dash = slug ? await cachedLatestScrape(slug) : null;
-    const saved = slug ? await db.getTopics(slug) : {};
-    const cats = slug ? await db.getQuestionCategories(slug) : {};
+    const dash = contest.slug ? await cachedLatestScrape(contest.slug) : null;
+    const saved = contest.slug ? await db.getTopics(contest.slug) : {};
+    const cats = contest.slug ? await db.getQuestionCategories(contest.slug) : {};
     const questions = dash ? dash.questions.map((q) => ({ name: q.name, topic: saved[q.name] || '', suggested: titleTag(q.name), category: cats[q.name] || '' })) : [];
-    res.json({ contest, links: sel.links, activeLinkId: activeLink ? String(activeLink.id) : 'primary', slug, contestUrl: activeLink?.contestUrl || '', hasScrape: !!dash, questions });
+    res.json({ contest, slug: contest.slug, contestUrl: contest.contestUrl || '', hasScrape: !!dash, questions });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/topics/:contestId', requireAdmin, async (req, res) => {
   try {
     const contest = await db.getContest(req.params.contestId);
-    if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    const sel = resolveSelectedLink(contest, req.body?.linkId || req.query.linkId);
-    const slug = sel.link?.slug || '';
-    if (!slug) return res.status(400).json({ error: 'Selected link has no HackerRank URL.' });
-    res.json({ ok: true, ...(await db.saveTopics(slug, req.body?.map || {})) });
+    if (!contest || !contest.slug) return res.status(400).json({ error: 'Course has no link.' });
+    res.json({ ok: true, ...(await db.saveTopics(contest.slug, req.body?.map || {})) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1079,22 +642,17 @@ app.get('/api/topic-videos/:contestId', requireAdmin, async (req, res) => {
   try {
     const contest = await db.getContest(req.params.contestId);
     if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    const sel = resolveSelectedLink(contest, req.query.linkId);
-    const slug = sel.link?.slug || '';
-    const dash = slug ? await cachedLatestScrape(slug) : null;
-    const videos = slug ? await db.getTopicVideos(slug) : {};
-    const topics = slug ? (await distinctTopics(slug, dash)).map((t) => ({ name: t, videos: videos[t] || [] })) : [];
+    const dash = contest.slug ? await cachedLatestScrape(contest.slug) : null;
+    const videos = contest.slug ? await db.getTopicVideos(contest.slug) : {};
+    const topics = (await distinctTopics(contest.slug, dash)).map((t) => ({ name: t, videos: videos[t] || [] }));
     res.json({ contest, hasScrape: !!dash, topics });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/topic-videos/:contestId', requireAdmin, async (req, res) => {
   try {
     const contest = await db.getContest(req.params.contestId);
-    if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    const sel = resolveSelectedLink(contest, req.body?.linkId || req.query.linkId);
-    const slug = sel.link?.slug || '';
-    if (!slug) return res.status(400).json({ error: 'Selected link has no HackerRank URL.' });
-    res.json({ ok: true, ...(await db.saveTopicVideos(slug, req.body?.map || {})) });
+    if (!contest || !contest.slug) return res.status(400).json({ error: 'Course has no link.' });
+    res.json({ ok: true, ...(await db.saveTopicVideos(contest.slug, req.body?.map || {})) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1103,10 +661,8 @@ app.get('/api/question-categories/:contestId', requireAdmin, async (req, res) =>
   try {
     const contest = await db.getContest(req.params.contestId);
     if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    const sel = resolveSelectedLink(contest, req.query.linkId);
-    const slug = sel.link?.slug || '';
-    const dash = slug ? await cachedLatestScrape(slug) : null;
-    const cats = slug ? await db.getQuestionCategories(slug) : {};
+    const dash = contest.slug ? await cachedLatestScrape(contest.slug) : null;
+    const cats = contest.slug ? await db.getQuestionCategories(contest.slug) : {};
     const questions = dash ? dash.questions.map((q) => ({ name: q.name, category: cats[q.name] || '' })) : [];
     res.json({ contest, hasScrape: !!dash, questions });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1114,16 +670,15 @@ app.get('/api/question-categories/:contestId', requireAdmin, async (req, res) =>
 app.post('/api/question-categories/:contestId', requireAdmin, async (req, res) => {
   try {
     const contest = await db.getContest(req.params.contestId);
-    if (!contest) return res.status(404).json({ error: 'Course not found.' });
-    const sel = resolveSelectedLink(contest, req.body?.linkId || req.query.linkId);
-    const slug = sel.link?.slug || '';
-    if (!slug) return res.status(400).json({ error: 'Selected link has no HackerRank URL.' });
-    res.json({ ok: true, ...(await db.saveQuestionCategories(slug, req.body?.map || {})) });
+    if (!contest || !contest.slug) return res.status(400).json({ error: 'Course has no link.' });
+    res.json({ ok: true, ...(await db.saveQuestionCategories(contest.slug, req.body?.map || {})) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Build per-student daily questions-completed from stored snapshots. Shared by
 // the admin Daily tab and the read-only shared view.
+// Calendar dates (UTC, matching how snapshots are bucketed) for the window
+// ending today: index 0 is (N-1) days ago, last is today.
 function lastNDates(n) {
   const now = new Date(); const out = [];
   for (let i = n - 1; i >= 0; i--) {
@@ -1131,50 +686,34 @@ function lastNDates(n) {
   }
   return out;
 }
-function computeDailyFromSeries(series, roster, days) {
+async function computeDaily(contest, N = 10) {
+  const [series, roster] = await Promise.all([
+    contest.slug ? cachedScrapeSeries(contest.slug) : [],
+    db.listStudentsForContest(contest.id),
+  ]);
+  const days = lastNDates(N);                         // always the last N calendar days
   const dayBefore = new Date(Date.parse(days[0] + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+
+  // Cumulative solved per snapshot day, carrying a student's last known count
+  // forward so a missing entry doesn't read as a drop to zero.
   const resolved = []; let acc = {};
   for (const s of series) { acc = Object.assign({}, acc, s.solved); resolved.push({ day: s.day, solved: acc }); }
+  // Latest snapshot on or before a given calendar date (null if none yet).
   const mapAt = (day) => { let m = null; for (const r of resolved) { if (r.day <= day) m = r.solved; else break; } return m; };
   const windowMaps = days.map(mapAt);
   const beforeMap = mapAt(dayBefore);
-  return roster.map((s) => {
+
+  const students = roster.map((s) => {
     const key = (s.usernameKey || s.hrUsername || '').toLowerCase();
-    let prev = beforeMap && beforeMap[key] != null ? beforeMap[key] : 0;
+    let prev = beforeMap && beforeMap[key] != null ? beforeMap[key] : 0; // baseline from before the window
     const daily = windowMaps.map((m) => {
-      const cur = m && m[key] != null ? m[key] : prev;
+      const cur = m && m[key] != null ? m[key] : prev; // no snapshot that day -> no change
       const delta = Math.max(0, cur - prev);
       prev = cur;
       return delta;
     });
     return { id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo, email: s.email, daily, total: prev };
-  });
-}
-async function computeDaily(contest, N = 10, linkId = '') {
-  const sel = resolveSelectedLink(contest, linkId);
-  const roster = await db.listStudentsForContest(contest.id);
-  const days = lastNDates(N);
-  if (sel.mode === 'all' && sel.links.length > 1) {
-    const slugs = sel.links.map((l) => l.slug).filter(Boolean);
-    const allSeries = await Promise.all(slugs.map((sl) => cachedScrapeSeries(sl)));
-    const combined = new Map();
-    for (const s of roster) {
-      combined.set(s.id, { id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo, email: s.email, daily: days.map(() => 0), total: 0 });
-    }
-    for (const series of allSeries) {
-      const part = computeDailyFromSeries(series, roster, days);
-      for (const p of part) {
-        const dst = combined.get(p.id);
-        if (!dst) continue;
-        for (let i = 0; i < days.length; i++) dst.daily[i] += p.daily[i];
-        dst.total += p.total;
-      }
-    }
-    return { days, students: Array.from(combined.values()).sort((a, b) => b.total - a.total) };
-  }
-  const slug = sel.link?.slug || '';
-  const series = slug ? await cachedScrapeSeries(slug) : [];
-  const students = computeDailyFromSeries(series, roster, days).sort((a, b) => b.total - a.total);
+  }).sort((a, b) => b.total - a.total);
   return { days, students };
 }
 
@@ -1184,9 +723,8 @@ app.get('/api/daily/:contestId', requireAdmin, async (req, res) => {
     const contest = await db.getContest(req.params.contestId);
     if (!contest) return res.status(404).json({ error: 'Course not found.' });
     const N = Math.min(Math.max(parseInt(req.query.days, 10) || 10, 1), 60); // last N days (default 10)
-    const sel = resolveSelectedLink(contest, req.query.linkId);
-    const { days, students } = await computeDaily(contest, N, req.query.linkId);
-    res.json({ contest: { name: contest.name }, links: sel.links, activeLinkId: sel.activeLinkId, days, students });
+    const { days, students } = await computeDaily(contest, N);
+    res.json({ contest: { name: contest.name }, days, students });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1207,33 +745,22 @@ app.post('/api/student/contests', async (req, res) => {
     const { college, accessCode, hrUsername } = req.body || {};
     if (!(await db.verifyCollegeCode(college, accessCode))) return res.status(401).json({ error: 'Wrong college or access code.' });
     const c = await db.getCollegeByName(college);
-    res.json({
-      contests: (await db.listContestsForStudent(c.name, hrUsername)).map((ct) => ({
-        id: ct.id,
-        name: ct.name,
-        semester: ct.semester || '',
-        isArchived: !!ct.isArchived,
-        links: getEffectiveLinks(ct).map((l) => ({ id: l.id, label: l.label, hasLink: !!l.slug })),
-      })),
-    });
+    res.json({ contests: (await db.listContestsForStudent(c.name, hrUsername)).map((ct) => ({ id: ct.id, name: ct.name })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/student/practice', async (req, res) => {
   try {
-    const { college, accessCode, hrUsername, contestId, linkId } = req.body || {};
+    const { college, accessCode, hrUsername, contestId } = req.body || {};
     if (!(await db.verifyCollegeCode(college, accessCode))) return res.status(401).json({ error: 'Wrong college or access code.' });
     const c = await db.getCollegeByName(college);
     // Choose the requested contest, else the college's first contest.
     const contests = await db.listContests(c.name);
     const ct = contests.find((x) => String(x.id) === String(contestId)) || contests[0];
-    const sel = ct ? resolveSelectedLink(ct, linkId) : null;
-    const activeLink = sel?.link || null;
-    const slug = activeLink?.slug || ct?.slug || c.slug;
+    const slug = ct?.slug || c.slug;
     const dash = slug ? await cachedLatestScrape(slug) : null;
     let contest = null, questions = [], stats = null, topicVideos = {};
     if (dash) {
-      const linkSuffix = sel && sel.links.length > 1 && activeLink?.label ? ` (${activeLink.label})` : '';
-      contest = { name: ((ct && ct.name) || dash.contest.name) + linkSuffix, semester: (ct && ct.semester) || '', activeLinkId: sel?.activeLinkId || 'primary' };
+      contest = { name: (ct && ct.name) || dash.contest.name };
       topicVideos = await db.getTopicVideos(slug);
       const saved = await db.getTopics(slug);
       const cats = await db.getQuestionCategories(slug);
@@ -1251,7 +778,7 @@ app.post('/api/student/practice', async (req, res) => {
         rank, participants: dash.users.length,
       };
     }
-    res.json({ contest, links: sel?.links || [], activeLinkId: sel?.activeLinkId || 'primary', questions, hrUsername, stats, topicVideos });
+    res.json({ contest, questions, hrUsername, stats, topicVideos });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1274,28 +801,18 @@ app.post('/api/shared-tabs', requireAdmin, async (req, res) => {
 });
 
 // Build the read-only payload for one contest (shared by contest + college links).
-async function contestSharePayload(contest, linkId = '') {
-  const [view, rosterRaw, facets] = await Promise.all([
-    loadContestViewData(contest, linkId),
+async function contestSharePayload(contest) {
+  const [dash, topics, rosterRaw, topicVideos, categories, facets] = await Promise.all([
+    contest.slug ? cachedLatestScrape(contest.slug) : null,
+    contest.slug ? db.getTopics(contest.slug) : {},
     db.listStudentsForContest(contest.id),
+    contest.slug ? db.getTopicVideos(contest.slug) : {},
+    contest.slug ? db.getQuestionCategories(contest.slug) : {},
     db.getStudentFacets(contest.college),
   ]);
   const roster = rosterRaw.map((s) => ({ id: s.id, name: s.name, hrUsername: s.hrUsername, department: s.department, section: s.section, year: s.year, campus: s.campus, registerNo: s.registerNo, email: s.email }));
-  const daily = await computeDaily(contest, 10, view.activeLinkId);
-  return {
-    college: contest.college,
-    contest: { id: contest.id, name: contest.name, semester: contest.semester || '', isArchived: !!contest.isArchived },
-    links: view.links,
-    activeLinkId: view.activeLinkId,
-    dashboard: view.dash,
-    topics: view.topics,
-    roster,
-    topicVideos: view.topicVideos,
-    categories: view.categories,
-    daily,
-    facets,
-    tabs: await getSharedTabs(),
-  };
+  const daily = await computeDaily(contest, 10);
+  return { college: contest.college, contest: { name: contest.name }, dashboard: dash, topics, roster, topicVideos, categories, daily, facets, tabs: await getSharedTabs() };
 }
 async function collegeAttendance(collegeName) {
   const college = await db.getCollegeByName(collegeName);
@@ -1309,26 +826,7 @@ app.get('/api/shared/:token', async (req, res) => {
   try {
     const contest = await db.getContestByShareToken(req.params.token);
     if (!contest) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
-    res.json(await contestSharePayload(contest, req.query.linkId));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/shared/:token/export', async (req, res) => {
-  try {
-    const contest = await db.getContestByShareToken(req.params.token);
-    if (!contest) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
-    await exportSingleCourseResponse({ contest, linkId: req.query.linkId, query: req.query, origin: requestOrigin(req), res });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/shared/:token/export/student/:studentId', async (req, res) => {
-  try {
-    const contest = await db.getContestByShareToken(req.params.token);
-    if (!contest) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
-    const student = await db.getStudent(req.params.studentId);
-    if (!student || student.college !== contest.college) return res.status(403).json({ error: 'Student not found in this course.' });
-    const coursesData = await expandContestExportData(contest, [student]);
-    const buf = await buildStudentWorkbook({ student, coursesData, shareOrigin: requestOrigin(req) });
-    const who = student.registerNo ? `${student.name}_${student.registerNo}` : (student.name || student.hrUsername);
-    sendXlsx(res, buf, `${who}_${contest.name}_Progress`);
+    res.json(await contestSharePayload(contest));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/shared/:token/facets', async (req, res) => {
@@ -1355,27 +853,9 @@ app.get('/api/shared/:token/sync-stream', async (req, res) => {
   try {
     const contest = await db.getContestByShareToken(req.params.token);
     if (!contest) { send('failed', { error: 'This link is invalid or was revoked.' }); return res.end(); }
-    const sel = resolveSelectedLink(contest, req.query.linkId);
+    if (!contest.slug) { send('failed', { error: 'Course has no link.' }); return res.end(); }
     const session = await getEnvHrSession();
-    if (sel.mode === 'all') {
-      const jobs = expandScrapeJobs([contest]);
-      if (!jobs.length) { send('failed', { error: 'Course has no links.' }); return res.end(); }
-      send('start', { total: jobs.length, college: contest.college });
-      let ok = 0; const failures = [];
-      for (let i = 0; i < jobs.length && !aborted; i++) {
-        const j = jobs[i];
-        const at = { index: i + 1, total: jobs.length, name: j.name, college: contest.college };
-        send('contest', at);
-        try {
-          const r = await scrapeAndSave(session, j, (completed, total) => { if (!aborted) send('progress', { ...at, completed, totalUsers: total }); });
-          ok++; send('contest-done', { ...at, users: r.users });
-        } catch (e) { failures.push(`${j.linkLabel}: ${e.message}`); send('contest-failed', { ...at, error: e.message }); }
-      }
-      if (!aborted) send('done', { ok, total: jobs.length, failures });
-      return res.end();
-    }
-    if (!sel.link || !sel.link.slug) { send('failed', { error: 'Selected link has no HackerRank URL.' }); return res.end(); }
-    await streamSingleContestScrape({ session, contest: { ...contest, slug: sel.link.slug, contestUrl: sel.link.contestUrl }, send, isAborted: () => aborted });
+    await streamSingleContestScrape({ session, contest, send, isAborted: () => aborted });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
 });
@@ -1472,18 +952,11 @@ app.get('/api/college/:token/contests', async (req, res) => {
     if (!id) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
     const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
     if (!college) return res.status(404).json({ error: 'College not found.' });
-    const contests = (await db.listContests(college.name)).map((c) => ({
-      id: c.id,
-      name: c.name,
-      semester: c.semester || '',
-      isArchived: !!c.isArchived,
-      hasLink: getEffectiveLinks(c).some((l) => !!l.slug),
-      links: getEffectiveLinks(c).map((l) => ({ id: l.id, label: l.label, hasLink: !!l.slug })),
-    }));
+    const contests = (await db.listContests(college.name)).map((c) => ({ id: c.id, name: c.name, hasLink: !!c.slug }));
     res.json({ college: college.name, contests, tabs: await getSharedTabs() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-// One contest's data via the college token (supports ?linkId=primary|<id>|all).
+// One contest's data via the college token (contest must belong to the college).
 app.get('/api/college/:token/contest/:contestId', async (req, res) => {
   try {
     const id = await collegeIdForToken(req.params.token);
@@ -1491,60 +964,7 @@ app.get('/api/college/:token/contest/:contestId', async (req, res) => {
     const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
     const contest = await db.getContest(req.params.contestId);
     if (!college || !contest || contest.college !== college.name) return res.status(404).json({ error: 'Course not found for this link.' });
-    res.json(await contestSharePayload(contest, req.query.linkId));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-// Read-only Excel exports via college share token
-app.get('/api/college/:token/export/course/:contestId', async (req, res) => {
-  try {
-    const id = await collegeIdForToken(req.params.token);
-    if (!id) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
-    const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
-    const contest = await db.getContest(req.params.contestId);
-    if (!college || !contest || contest.college !== college.name) return res.status(404).json({ error: 'Course not found for this link.' });
-    await exportSingleCourseResponse({ contest, linkId: req.query.linkId, query: req.query, origin: requestOrigin(req), res });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/college/:token/export/college', async (req, res) => {
-  try {
-    const id = await collegeIdForToken(req.params.token);
-    if (!id) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
-    const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
-    if (!college) return res.status(404).json({ error: 'College not found.' });
-    const semesterFilter = req.query.semester ? String(req.query.semester).trim() : '';
-    const [allStudents, contests] = await Promise.all([
-      db.listStudents({ college: college.name }),
-      db.listContests(college.name, { includeArchived: true }),
-    ]);
-    const coursesData = [];
-    for (const ct of contests) coursesData.push(...(await expandContestExportData(ct, null, semesterFilter)));
-    const origin = requestOrigin(req);
-    const collegeShareUrl = origin ? `${origin}/college/${req.params.token}` : '';
-    const buf = await buildCollegeWorkbook({
-      collegeName: college.name,
-      collegeShareUrl,
-      semesterFilter,
-      coursesData,
-      allStudents,
-      shareOrigin: origin,
-    });
-    const semPart = semesterFilter ? `_${semesterFilter}` : '_All_Semesters';
-    sendXlsx(res, buf, `${college.name}${semPart}_Completion_Report`);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/college/:token/export/student/:studentId', async (req, res) => {
-  try {
-    const id = await collegeIdForToken(req.params.token);
-    if (!id) return res.status(404).json({ error: 'This link is invalid or was revoked.' });
-    const college = (await db.listColleges()).find((c) => String(c.id) === String(id));
-    const student = await db.getStudent(req.params.studentId);
-    if (!college || !student || student.college !== college.name) return res.status(403).json({ error: 'Student not found in this college.' });
-    const contests = await db.listContestsForStudent(college.name, student.usernameKey || student.hrUsername);
-    const coursesData = [];
-    for (const ct of contests) coursesData.push(...(await expandContestExportData(ct, [student])));
-    const buf = await buildStudentWorkbook({ student, coursesData, shareOrigin: requestOrigin(req) });
-    const who = student.registerNo ? `${student.name}_${student.registerNo}` : (student.name || student.hrUsername);
-    sendXlsx(res, buf, `${who}_Progress_Report`);
+    res.json(await contestSharePayload(contest));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/college/:token/attendance', async (req, res) => {
@@ -1578,42 +998,23 @@ app.get('/api/college/:token/sync-stream', async (req, res) => {
     if (!college) { send('failed', { error: 'College not found.' }); return res.end(); }
     const session = await getEnvHrSession();
 
-    const { contestId, linkId } = req.query;
+    const { contestId } = req.query;
     if (contestId && contestId !== 'all') {
       const contest = await db.getContest(contestId);
       if (!contest || contest.college !== college.name) { send('failed', { error: 'Course not found in this college.' }); return res.end(); }
-      const sel = resolveSelectedLink(contest, linkId);
-      if (sel.mode === 'all') {
-        const jobs = expandScrapeJobs([contest]);
-        if (!jobs.length) { send('failed', { error: 'This course has no links.' }); return res.end(); }
-        send('start', { total: jobs.length, college: college.name });
-        let ok = 0; const failures = [];
-        for (let i = 0; i < jobs.length && !aborted; i++) {
-          const j = jobs[i];
-          const at = { index: i + 1, total: jobs.length, name: j.name, college: college.name };
-          send('contest', at);
-          try {
-            const r = await scrapeAndSave(session, j, (completed, total) => { if (!aborted) send('progress', { ...at, completed, totalUsers: total }); });
-            ok++; send('contest-done', { ...at, users: r.users });
-          } catch (e) { failures.push(`${j.name}: ${e.message}`); send('contest-failed', { ...at, error: e.message }); }
-        }
-        if (!aborted) send('done', { ok, total: jobs.length, failures, college: college.name });
-        return res.end();
-      }
-      if (!sel.link || !sel.link.slug) { send('failed', { error: 'This link has no HackerRank URL.' }); return res.end(); }
-      await streamSingleContestScrape({ session, contest: { ...contest, slug: sel.link.slug, contestUrl: sel.link.contestUrl }, send, isAborted: () => aborted });
+      if (!contest.slug) { send('failed', { error: 'This course has no link.' }); return res.end(); }
+      await streamSingleContestScrape({ session, contest, send, isAborted: () => aborted });
       return res.end();
     }
 
-    // Sync all active (non-archived) contests & their attached links in this college
-    const contests = await db.listContests(college.name, { includeArchived: false });
-    const jobs = expandScrapeJobs(contests);
-    if (!jobs.length) { send('failed', { error: 'No courses with links found for this college.' }); return res.end(); }
-    send('start', { total: jobs.length, college: college.name });
+    // Sync all contests in this college
+    const contests = (await db.listContests(college.name)).filter((c) => c.slug);
+    if (!contests.length) { send('failed', { error: 'No courses with links found for this college.' }); return res.end(); }
+    send('start', { total: contests.length, college: college.name });
     let ok = 0; const failures = [];
-    for (let i = 0; i < jobs.length && !aborted; i++) {
-      const c = jobs[i];
-      const at = { index: i + 1, total: jobs.length, name: c.name, college: college.name };
+    for (let i = 0; i < contests.length && !aborted; i++) {
+      const c = contests[i];
+      const at = { index: i + 1, total: contests.length, name: c.name, college: college.name };
       send('contest', at);
       try {
         const r = await scrapeAndSave(session, c, (completed, total) => { if (!aborted) send('progress', { ...at, completed, totalUsers: total }); });
@@ -1623,7 +1024,7 @@ app.get('/api/college/:token/sync-stream', async (req, res) => {
         send('contest-failed', { ...at, error: e.message });
       }
     }
-    if (!aborted) send('done', { ok, total: jobs.length, failures, college: college.name });
+    if (!aborted) send('done', { ok, total: contests.length, failures, college: college.name });
     res.end();
   } catch (e) { send('failed', { error: e.message }); res.end(); }
 });
@@ -1717,12 +1118,11 @@ async function autoSyncAll() {
   autoState.running = true;
   try {
     const session = await getEnvHrSession();
-    const contests = await db.listContests(undefined, { includeArchived: false });
-    const jobs = expandScrapeJobs(contests);
+    const contests = (await db.listContests()).filter((c) => c.slug);
     let ok = 0; const errs = [];
-    for (const c of jobs) { try { await scrapeAndSave(session, c); ok++; } catch (e) { errs.push(`${c.slug}: ${e.message}`); } }
+    for (const c of contests) { try { await scrapeAndSave(session, c); ok++; } catch (e) { errs.push(`${c.slug}: ${e.message}`); } }
     autoState.lastRun = new Date().toISOString();
-    autoState.lastResult = `${ok}/${jobs.length} course links synced${errs.length ? ' · ' + errs.length + ' failed' : ''}`;
+    autoState.lastResult = `${ok}/${contests.length} courses synced${errs.length ? ' · ' + errs.length + ' failed' : ''}`;
     console.log('[auto-sync]', autoState.lastResult);
   } catch (e) {
     autoState.lastRun = new Date().toISOString();

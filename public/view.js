@@ -12,84 +12,9 @@ function splitTitle(name) { const m = String(name).split(/\s+[–—-]\s+/); ret
 let dashData = null, dashTopics = {}, dashCats = {}, roster = [], dailyData = null, collegeFacets = { departments: [], sections: [], years: [], campuses: [] };
 let studentsPage = 1; const STUDENTS_PAGE = 50;
 let currentContestId = '';
-let currentLinkId = '';
-let currentLinks = [];
-let currentCollegeName = '';
-let currentContestName = '';
 let taRows = [];
 let compDist = [], compTotal = 0, compTotalQ = 0, compMax = 1, compPage = 1; const COMP_PAGE = 20;
 let cbRows = [], cbPage = 1; const CB_PAGE = 20;
-
-async function downloadReadOnlyExcel(url, fallbackName, btn = null) {
-  const stat = $('view-status');
-  const prevText = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
-  if (stat) { stat.textContent = 'Generating formatted Excel report…'; stat.className = 'status info'; }
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || `Export failed (${res.status})`);
-    }
-    const blob = await res.blob();
-    const cd = res.headers.get('content-disposition') || '';
-    const m = cd.match(/filename="?([^"]+)"?/i);
-    const filename = (m && m[1]) || (fallbackName.endsWith('.xlsx') ? fallbackName : `${fallbackName}.xlsx`);
-    const objUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
-    if (stat) { stat.textContent = `Downloaded ${filename}`; stat.className = 'status ok'; }
-  } catch (e) {
-    if (stat) { stat.textContent = `Export failed: ${e.message}`; stat.className = 'status err'; }
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = prevText; }
-  }
-}
-
-function syncViewSelectorsVisibility() {
-  const row = $('view-selectors-row');
-  if (!row) return;
-  const anyVisible = ['view-sem-wrap', 'view-contest-wrap', 'view-link-wrap'].some((id) => {
-    const el = $(id);
-    return el && !el.classList.contains('hidden');
-  });
-  row.classList.toggle('hidden', !anyVisible);
-}
-
-function updateViewLinkPicker(links, activeId) {
-  currentLinks = Array.isArray(links) ? links : [];
-  const wrap = $('view-link-wrap');
-  const sel = $('view-link');
-  if (!wrap || !sel) return;
-  if (currentLinks.length <= 1) {
-    wrap.classList.add('hidden');
-    currentLinkId = currentLinks[0] ? String(currentLinks[0].id) : 'primary';
-    sel.innerHTML = '';
-    syncViewSelectorsVisibility();
-    return;
-  }
-  wrap.classList.remove('hidden');
-  sel.innerHTML =
-    currentLinks.map((l) => `<option value="${esc(l.id)}">${esc(l.label)}${l.slug ? '' : ' (no link)'}</option>`).join('') +
-    `<option value="all">All links (Combined)</option>`;
-  currentLinkId = activeId ? String(activeId) : String(currentLinks[0].id);
-  sel.value = currentLinkId;
-  syncViewSelectorsVisibility();
-}
-
-$('view-link')?.addEventListener('change', () => {
-  currentLinkId = $('view-link').value;
-  if (isCollege) {
-    if (currentContestId) loadCollegeContest(currentContestId, currentLinkId);
-  } else {
-    loadSharedContest(currentLinkId);
-  }
-});
 
 // Show only the tabs the admin enabled for shared links; activate the first visible one.
 function applyTabs(tabs) {
@@ -108,17 +33,11 @@ function applyPayload(d) {
   if (d.tabs) applyTabs(d.tabs);
   dashData = d.dashboard; dashTopics = d.topics || {}; dashCats = d.categories || {}; roster = d.roster || []; dailyData = d.daily || null;
   if (d.facets) collegeFacets = d.facets;
-  currentCollegeName = d.college || currentCollegeName;
-  currentContestName = d.contest?.name || currentContestName;
-  if (d.contest?.id) currentContestId = String(d.contest.id);
-  updateViewLinkPicker(d.links || [], d.activeLinkId || currentLinkId);
   $('view-title').textContent = isCollege ? `${d.college}` : `${d.contest.name} — ${d.college}`;
   document.title = isCollege ? `${d.college} · ${d.contest.name}` : `${d.contest.name} · ${d.college}`;
   studentsPage = 1;
   if (!dashData) {
-    const activeLink = currentLinks.find((l) => String(l.id) === String(currentLinkId));
-    const lbl = currentLinkId === 'all' ? `${d.contest.name} (All links)` : (activeLink && currentLinks.length > 1 ? `${d.contest.name} — ${activeLink.label}` : d.contest.name);
-    $('view-status').textContent = `"${lbl}" has not been synced yet.`; $('view-status').className = 'status info';
+    $('view-status').textContent = `"${d.contest.name}" has not been synced yet.`; $('view-status').className = 'status info';
     ['summary', 'topic-analysis-card', 'completion-card', 'category-card', 'topic-cat-card'].forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
     $('students-table').innerHTML = ''; renderDaily();
     return;
@@ -126,72 +45,6 @@ function applyPayload(d) {
   $('view-status').textContent = ''; $('view-status').className = 'status';
   fillFilters(); renderSummary(); renderTopicAnalysis(); renderCompletion(); renderCategoryChart(); renderStudents(); renderDaily();
 }
-let collegeContests = [];
-function sortSemesters(list) {
-  const rank = (s) => {
-    if (s === 'Even Sem (2026-27)') return 0;
-    if (s === 'Odd Sem (2025-26)') return 1;
-    if (s === 'Unassigned') return 999;
-    return 10;
-  };
-  return [...list].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
-}
-function semFromLinkLabel(label) {
-  const m = String(label || '').trim().match(/^(Sem\s*\d+)/i);
-  return m ? ('Sem ' + m[1].replace(/\D+/g, '')) : '';
-}
-function contestSemesters(c) {
-  const out = new Set();
-  if ((c?.semester || '').trim()) out.add(c.semester.trim());
-  for (const l of (c?.links || [])) {
-    const ls = semFromLinkLabel(l.label);
-    if (ls) out.add(ls);
-  }
-  return out;
-}
-function preferredLinkForSemester(ct, semVal) {
-  if (!ct || !semVal || semVal === '__unassigned__') return '';
-  const hit = (ct.links || []).find((l) => semFromLinkLabel(l.label) === semVal);
-  return hit ? String(hit.id) : '';
-}
-function renderViewContestSelect(semFilter = '') {
-  const sel = $('view-contest');
-  const filtered = !semFilter
-    ? collegeContests
-    : semFilter === '__unassigned__'
-      ? collegeContests.filter((c) => contestSemesters(c).size === 0)
-      : collegeContests.filter((c) => contestSemesters(c).has(semFilter));
-  const optHtml = (c) => `<option value="${c.id}">${esc(c.name)}${c.isArchived ? ' [Archived]' : ''}${c.hasLink ? '' : ' (no link)'}</option>`;
-  if (semFilter) {
-    sel.innerHTML = filtered.map(optHtml).join('');
-    return filtered;
-  }
-  const groups = new Map();
-  for (const c of filtered) {
-    const k = (c.semester || '').trim() || 'Unassigned';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(c);
-  }
-  const useGroups = groups.size > 1;
-  if (useGroups) {
-    const keys = sortSemesters(Array.from(groups.keys()));
-    sel.innerHTML = keys.map((k) => `<optgroup label="${esc(k)}">${groups.get(k).map(optHtml).join('')}</optgroup>`).join('');
-    return keys.flatMap((k) => groups.get(k));
-  }
-  sel.innerHTML = filtered.map(optHtml).join('');
-  return filtered;
-}
-async function loadSharedContest(linkId = '') {
-  $('view-status').textContent = 'Loading…'; $('view-status').className = 'status info';
-  try {
-    const qs = linkId ? `?linkId=${encodeURIComponent(linkId)}` : '';
-    const res = await fetch('/api/shared/' + token + qs);
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || 'Not found');
-    applyPayload(d);
-  } catch (e) { $('view-status').textContent = e.message; $('view-status').className = 'status err'; }
-}
-
 async function boot() {
   try {
     if (isCollege) {
@@ -199,84 +52,32 @@ async function boot() {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Not found');
       applyTabs(d.tabs);
-      currentCollegeName = d.college;
       $('view-title').textContent = d.college; document.title = d.college;
-      collegeContests = d.contests || [];
-      if ($('view-export-college-btn')) $('view-export-college-btn').classList.remove('hidden');
-      if (!collegeContests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
-      if (collegeContests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
-
-      const semSet = new Set();
-      let hasUnassigned = false;
-      for (const c of collegeContests) {
-        const cs = contestSemesters(c);
-        if (!cs.size) hasUnassigned = true;
-        else for (const s of cs) semSet.add(s);
-      }
-      const sems = sortSemesters(Array.from(semSet));
-      if (sems.length > 1 && $('view-sem-wrap') && $('view-sem')) {
-        $('view-sem-wrap').classList.remove('hidden');
-        $('view-sem').innerHTML = `<option value="">All semesters</option>` +
-          sems.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('') +
-          (hasUnassigned ? `<option value="__unassigned__">Unassigned</option>` : '');
-        $('view-sem').onchange = () => {
-          const semVal = $('view-sem').value;
-          const list = renderViewContestSelect(semVal);
-          if (list.length) loadCollegeContest(list[0].id, preferredLinkForSemester(list[0], semVal));
-        };
-      }
-
+      const contests = d.contests || [];
+      if (!contests.length) { $('view-status').textContent = 'No courses in this college yet.'; $('view-status').className = 'status info'; return; }
+      if (contests.length > 1 && $('view-sync-all-btn')) $('view-sync-all-btn').classList.remove('hidden');
       const sel = $('view-contest'); $('view-contest-wrap').classList.remove('hidden');
-      syncViewSelectorsVisibility();
-      const initial = renderViewContestSelect('');
-      sel.onchange = () => {
-        const semVal = $('view-sem')?.value || '';
-        const ct = collegeContests.find((x) => String(x.id) === String(sel.value));
-        loadCollegeContest(sel.value, preferredLinkForSemester(ct, semVal));
-      };
-      if (initial.length) await loadCollegeContest(initial[0].id, '');
+      sel.innerHTML = contests.map((c) => `<option value="${c.id}">${esc(c.name)}${c.hasLink ? '' : ' (no link)'}</option>`).join('');
+      sel.onchange = () => loadCollegeContest(sel.value);
+      await loadCollegeContest(contests[0].id);
     } else {
-      await loadSharedContest('');
+      const res = await fetch('/api/shared/' + token);
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Not found');
+      applyPayload(d);
     }
   } catch (e) { $('view-status').textContent = e.message; $('view-status').className = 'status err'; }
 }
-async function loadCollegeContest(contestId, linkId = '') {
+async function loadCollegeContest(contestId) {
   currentContestId = String(contestId);
-  currentLinkId = linkId || '';
   $('view-status').textContent = 'Loading…'; $('view-status').className = 'status info';
   try {
-    const qs = linkId ? `?linkId=${encodeURIComponent(linkId)}` : '';
-    const res = await fetch('/api/college/' + token + '/contest/' + contestId + qs);
+    const res = await fetch('/api/college/' + token + '/contest/' + contestId);
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'Not found');
     applyPayload(d);
   } catch (e) { $('view-status').textContent = e.message; $('view-status').className = 'status err'; }
 }
-
-// ---------------- Read-only Excel exports ----------------
-$('view-export-btn')?.addEventListener('click', () => {
-  const params = new URLSearchParams();
-  if (currentLinkId) params.set('linkId', currentLinkId);
-  if ($('f-campus')?.value) params.set('campus', $('f-campus').value);
-  if ($('f-department')?.value) params.set('department', $('f-department').value);
-  if ($('f-section')?.value) params.set('section', $('f-section').value);
-  if ($('f-year')?.value) params.set('year', $('f-year').value);
-  if ($('f-search')?.value.trim()) params.set('q', $('f-search').value.trim());
-  const qs = params.toString() ? `?${params.toString()}` : '';
-  const url = isCollege
-    ? `/api/college/${token}/export/course/${currentContestId}${qs}`
-    : `/api/shared/${token}/export${qs}`;
-  const clean = `${currentCollegeName || 'report'}_${currentContestName || 'course'}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-  downloadReadOnlyExcel(url, `${clean}_Report.xlsx`, $('view-export-btn'));
-});
-
-$('view-export-college-btn')?.addEventListener('click', () => {
-  if (!isCollege) return;
-  const semVal = $('view-sem')?.value || '';
-  const semParam = semVal && semVal !== '__unassigned__' ? `?semester=${encodeURIComponent(semVal)}` : '';
-  const clean = (currentCollegeName || 'college').replace(/[^a-zA-Z0-9_-]/g, '_');
-  downloadReadOnlyExcel(`/api/college/${token}/export/college${semParam}`, `${clean}_Completion_Report.xlsx`, $('view-export-college-btn'));
-});
 
 // ---------------- Read-only sync ----------------
 function syncReadDashboard(syncAll = false) {
@@ -298,13 +99,9 @@ function syncReadDashboard(syncAll = false) {
 
   let url;
   if (isCollege) {
-    const p = new URLSearchParams();
-    p.set('contestId', syncAll ? 'all' : (currentContestId || ''));
-    if (!syncAll && currentLinkId) p.set('linkId', currentLinkId);
-    url = '/api/college/' + token + '/sync-stream?' + p.toString();
+    url = '/api/college/' + token + '/sync-stream' + (syncAll ? '?contestId=all' : (currentContestId ? '?contestId=' + currentContestId : ''));
   } else {
-    const qs = currentLinkId ? `?linkId=${encodeURIComponent(currentLinkId)}` : '';
-    url = '/api/shared/' + token + '/sync-stream' + qs;
+    url = '/api/shared/' + token + '/sync-stream';
   }
 
   const stop = () => {
@@ -357,9 +154,9 @@ function syncReadDashboard(syncAll = false) {
     setTimeout(() => { if (prog) prog.classList.add('hidden'); }, 2000);
     // Refresh data
     if (isCollege) {
-      if (currentContestId) loadCollegeContest(currentContestId, currentLinkId);
+      if (currentContestId) loadCollegeContest(currentContestId);
     } else {
-      loadSharedContest(currentLinkId);
+      fetch('/api/shared/' + token).then((r) => r.json()).then(applyPayload).catch((e) => console.error(e));
     }
   });
   es.addEventListener('failed', (ev) => {
@@ -599,9 +396,9 @@ function renderStudents() {
   if (studentsPage > pages) studentsPage = pages;
   const start = (studentsPage - 1) * STUDENTS_PAGE, rows = all.slice(start, start + STUDENTS_PAGE);
   $('students-table').innerHTML =
-    `<thead><tr><th class="col-idx">#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th><th class="col-edit">Edit</th></tr></thead><tbody>` +
+    `<thead><tr><th>#</th><th class="grow">Student</th><th class="grow">HR username</th><th>Dept</th><th>Section</th><th class="num">Solved</th><th class="num">Score</th><th class="comp">Completion</th><th style="width:48px;text-align:center">Edit</th></tr></thead><tbody>` +
     (rows.length ? rows.map((r, idx) =>
-      `<tr><td class="col-idx">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="badge none" style="margin-left:6px">absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="comp-wrap"><div class="bar"><span style="width:${r.completion}%"></span></div><span class="comp-pct">${r.completion}%</span></div></td><td class="col-edit"><button class="ghost xs edit-student-btn" data-edit-student="${r.id}" title="Check & Update student details">✏️</button></td></tr>`).join('')
+      `<tr><td class="num">${start + idx + 1}</td><td class="grow"><a class="user-link" data-user="${esc(r.hrUsername)}">${esc(r.name || r.hrUsername || '(unnamed)')}</a></td><td class="grow">${r.hasHrId ? esc(r.hrUsername) + (r.inContest ? '' : ' <span class="muted">·absent</span>') : '<span class="badge warn">no HR id</span>'}</td><td>${esc(r.department || '—')}</td><td>${esc(r.section || '—')}</td><td class="num">${r.solved}/${r.totalQ}</td><td class="num">${r.score}</td><td class="comp"><div class="bar"><span style="width:${r.completion}%"></span></div></td><td style="text-align:center"><button class="ghost sm edit-student-btn" data-edit-student="${r.id}" title="Check & Update student details" style="padding:2px 7px;font-size:.85rem;cursor:pointer">✏️</button></td></tr>`).join('')
       : `<tr><td colspan="9" class="muted">No students.</td></tr>`) + `</tbody>`;
   const from = all.length ? start + 1 : 0;
   $('students-pager').innerHTML = all.length > STUDENTS_PAGE ? `<button class="ghost sm" id="st-prev" ${studentsPage <= 1 ? 'disabled' : ''}>‹ Prev</button><span class="muted">${from}–${Math.min(start + STUDENTS_PAGE, all.length)} of ${all.length} · page ${studentsPage}/${pages}</span><button class="ghost sm" id="st-next" ${studentsPage >= pages ? 'disabled' : ''}>Next ›</button>` : '';
@@ -1095,16 +892,6 @@ $('students-table').addEventListener('click', (e) => {
 
 // ---- Performance modal ----
 $('perf-close').addEventListener('click', () => $('perf-modal').classList.add('hidden'));
-$('perf-export-btn')?.addEventListener('click', () => {
-  const btn = $('perf-export-btn');
-  const sid = btn?.dataset.studentId;
-  if (!sid) return;
-  const url = isCollege
-    ? `/api/college/${token}/export/student/${sid}`
-    : `/api/shared/${token}/export/student/${sid}`;
-  const clean = (btn.dataset.studentName || 'student').replace(/[^a-zA-Z0-9_-]/g, '_');
-  downloadReadOnlyExcel(url, `${clean}_Progress_Report.xlsx`, btn);
-});
 $('perf-modal').addEventListener('click', (e) => { if (e.target.id === 'perf-modal') $('perf-modal').classList.add('hidden'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay').forEach((m) => m.classList.add('hidden')); });
 function openPerf(hrUsername) {
@@ -1117,17 +904,6 @@ function openPerf(hrUsername) {
   const u = dashData?.users?.find((x) => x.username && x.username.toLowerCase() === username.toLowerCase());
 
   $('perf-title').textContent = r.name || username;
-  const expBtn = $('perf-export-btn');
-  if (expBtn) {
-    if (r.id) {
-      expBtn.classList.remove('hidden');
-      expBtn.dataset.studentId = String(r.id);
-      expBtn.dataset.studentName = r.name || username;
-    } else {
-      expBtn.classList.add('hidden');
-      delete expBtn.dataset.studentId;
-    }
-  }
   $('perf-meta').innerHTML = [
     `@${esc(username)}`,
     r.registerNo && `Reg: ${esc(r.registerNo)}`,
