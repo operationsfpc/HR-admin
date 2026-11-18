@@ -65,7 +65,17 @@ async function downloadAuthExcel(url, fallbackName, statusEl) {
 }
 
 // ---------- Semester & Contest Selector Helpers ----------
-const DEFAULT_SEMESTERS = ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4', 'Sem 5', 'Sem 6', 'Sem 7', 'Sem 8'];
+const DEFAULT_SEMESTERS = ['Even Sem (2026-27)', 'Odd Sem (2025-26)'];
+
+function sortSemesters(list) {
+  const rank = (s) => {
+    if (s === 'Even Sem (2026-27)') return 0;
+    if (s === 'Odd Sem (2025-26)') return 1;
+    if (s === 'Unassigned') return 999;
+    return 10;
+  };
+  return [...list].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
+}
 
 function semFromLinkLabel(label) {
   const m = String(label || '').trim().match(/^(Sem\s*\d+)/i);
@@ -91,7 +101,7 @@ function distinctSemesters(contests) {
     if (!cs.size) hasUnassigned = true;
     else for (const s of cs) semsSet.add(s);
   }
-  const sems = Array.from(semsSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const sems = sortSemesters(Array.from(semsSet));
   return { sems, hasUnassigned };
 }
 
@@ -142,14 +152,10 @@ function fillGroupedContestSelect(sel, contests, { emptyText = 'No contests', in
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(c);
   }
-  const useGroups = groups.size > 1 || !groups.has('Unassigned');
+  const useGroups = groups.size > 1;
   let body = '';
   if (useGroups) {
-    const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
-      if (a === 'Unassigned') return 1;
-      if (b === 'Unassigned') return -1;
-      return a.localeCompare(b, undefined, { numeric: true });
-    });
+    const sortedKeys = sortSemesters(Array.from(groups.keys()));
     body = sortedKeys.map((k) => `<optgroup label="${esc(k)}">${groups.get(k).map(optHtml).join('')}</optgroup>`).join('');
   } else {
     body = contests.map(optHtml).join('');
@@ -550,8 +556,7 @@ function renderCcTable() {
   const start = (ccPage - 1) * CC_PAGE;
   const rows = filtered.slice(start, start + CC_PAGE);
 
-  const allSemOptions = Array.from(new Set([...DEFAULT_SEMESTERS, ...ccContests.map((x) => (x.semester || '').trim()).filter(Boolean)]))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const allSemOptions = sortSemesters(Array.from(new Set([...DEFAULT_SEMESTERS, ...ccContests.map((x) => (x.semester || '').trim()).filter(Boolean)])));
 
   t.innerHTML =
     `<thead><tr>` +
@@ -1187,8 +1192,8 @@ async function addContest() {
   if (!selectedCollegeId) return setStatus($('dash-status'), 'Pick a college first.', 'err');
   const name = prompt('Course name (e.g. Data Structures):'); if (!name) return;
   const curSem = $('dash-semester')?.value;
-  const defaultSem = curSem && curSem !== '__unassigned__' ? curSem : 'Sem 1';
-  const semInput = prompt('Semester (e.g. Sem 1, Sem 2, 2026-27 Sem 1):', defaultSem);
+  const defaultSem = curSem && curSem !== '__unassigned__' ? curSem : 'Even Sem (2026-27)';
+  const semInput = prompt('Semester (e.g. Even Sem (2026-27), Odd Sem (2025-26)):', defaultSem);
   if (semInput === null) return;
   const contestUrl = prompt('HackerRank course link:') || '';
   try {
@@ -1233,7 +1238,7 @@ function fillLinkSelect(sel, wrap, links, { includeAll = true, currentVal = '' }
 function renderDashLinksBar(ct) {
   const bar = $('dash-links-bar');
   if (!bar) return;
-  if (!ct) { bar.innerHTML = ''; return; }
+  if (!ct) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
   const links = getContestLinksFor(ct);
   selectedLinkId = fillLinkSelect($('dash-link'), $('dash-link-wrap'), links, { includeAll: true, currentVal: selectedLinkId });
   const active = selectedLinkId === 'all' ? null : (links.find((l) => String(l.id) === String(selectedLinkId)) || links[0]);
@@ -1242,15 +1247,11 @@ function renderDashLinksBar(ct) {
   $('dash-savelink').disabled = selectedLinkId === 'all';
 
   if (links.length <= 1) {
-    const primary = links[0];
-    bar.innerHTML =
-      `<span class="muted" style="font-size:.8rem">Link label:</span>` +
-      `<span class="link-chip active">` +
-      `<span>${esc(primary?.label || 'Main')}</span>` +
-      `<button class="link-chip-btn" data-rename-link="primary" data-cur-label="${esc(primary?.label || '')}" title="Rename label">✎</button>` +
-      `</span>`;
+    bar.innerHTML = '';
+    bar.classList.add('hidden');
     return;
   }
+  bar.classList.remove('hidden');
   bar.innerHTML = `<span class="muted" style="font-size:.8rem">Course links:</span>` +
     links.map((l) => {
       const isAct = String(selectedLinkId) === String(l.id);

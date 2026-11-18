@@ -63,8 +63,9 @@ function buildGroupedContestHtml(list) {
     }
     return `<option value="${c.id}|primary">${esc(c.name)}${c.isArchived ? ' [Archived]' : ''}</option>`;
   };
-  if (groups.size > 1 || !groups.has('Unassigned')) {
-    const keys = Array.from(groups.keys()).sort((a, b) => a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b, undefined, { numeric: true }));
+  if (groups.size > 1) {
+    const rank = (s) => (s === 'Even Sem (2026-27)' ? 0 : s === 'Odd Sem (2025-26)' ? 1 : s === 'Unassigned' ? 999 : 10);
+    const keys = Array.from(groups.keys()).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
     return keys.map((k) => `<optgroup label="${esc(k)}">${groups.get(k).map(opt).join('')}</optgroup>`).join('');
   }
   return list.map(opt).join('');

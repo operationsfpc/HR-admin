@@ -127,6 +127,15 @@ function applyPayload(d) {
   fillFilters(); renderSummary(); renderTopicAnalysis(); renderCompletion(); renderCategoryChart(); renderStudents(); renderDaily();
 }
 let collegeContests = [];
+function sortSemesters(list) {
+  const rank = (s) => {
+    if (s === 'Even Sem (2026-27)') return 0;
+    if (s === 'Odd Sem (2025-26)') return 1;
+    if (s === 'Unassigned') return 999;
+    return 10;
+  };
+  return [...list].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
+}
 function semFromLinkLabel(label) {
   const m = String(label || '').trim().match(/^(Sem\s*\d+)/i);
   return m ? ('Sem ' + m[1].replace(/\D+/g, '')) : '';
@@ -163,13 +172,13 @@ function renderViewContestSelect(semFilter = '') {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(c);
   }
-  const useGroups = groups.size > 1 || !groups.has('Unassigned');
+  const useGroups = groups.size > 1;
   if (useGroups) {
-    const keys = Array.from(groups.keys()).sort((a, b) => a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b, undefined, { numeric: true }));
+    const keys = sortSemesters(Array.from(groups.keys()));
     sel.innerHTML = keys.map((k) => `<optgroup label="${esc(k)}">${groups.get(k).map(optHtml).join('')}</optgroup>`).join('');
-  } else {
-    sel.innerHTML = filtered.map(optHtml).join('');
+    return keys.flatMap((k) => groups.get(k));
   }
+  sel.innerHTML = filtered.map(optHtml).join('');
   return filtered;
 }
 async function loadSharedContest(linkId = '') {
@@ -204,8 +213,8 @@ async function boot() {
         if (!cs.size) hasUnassigned = true;
         else for (const s of cs) semSet.add(s);
       }
-      const sems = Array.from(semSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-      if (sems.length && $('view-sem-wrap') && $('view-sem')) {
+      const sems = sortSemesters(Array.from(semSet));
+      if (sems.length > 1 && $('view-sem-wrap') && $('view-sem')) {
         $('view-sem-wrap').classList.remove('hidden');
         $('view-sem').innerHTML = `<option value="">All semesters</option>` +
           sems.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('') +

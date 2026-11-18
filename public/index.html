@@ -49,22 +49,21 @@
             <h3 style="margin:0">Dashboard</h3>
             <div class="toolbar-group">
               <button id="sync-btn" class="sm">⟳ Sync now</button>
-              <button id="dash-toggle-add-link" class="ghost sm" title="Attach another labeled HackerRank link to this course">＋ Add Link</button>
               <button id="contest-add" class="ghost sm" title="Create a new course">＋ Course</button>
               <button id="share-btn" class="ghost sm" title="Copy read-only share link for this course">🔗 Share course</button>
               <button id="share-college-btn" class="ghost sm" title="Copy read-only share link for the whole college">🔗 Share college</button>
-              <button id="dash-toggle-settings" class="ghost sm" title="Manage course link URL, shared tabs, and bulk sync">⚙ More</button>
+              <button id="dash-toggle-settings" class="ghost sm" title="Manage course link URL, extra links, shared tabs, and bulk sync">⚙ More</button>
             </div>
           </div>
 
           <div class="selector-bar">
             <label class="inline-label">College <select id="dash-college"></select></label>
-            <label class="inline-label" style="flex:0 1 190px">Semester <select id="dash-semester"><option value="">All semesters</option></select></label>
+            <label class="inline-label" style="flex:0 1 210px">Semester <select id="dash-semester"><option value="">All semesters</option></select></label>
             <label class="inline-label" style="flex:1.4 1 240px">Course <select id="dash-contest"></select></label>
             <label id="dash-link-wrap" class="inline-label hidden" style="display:none!important">Link <select id="dash-link"></select></label>
           </div>
 
-          <div id="dash-links-bar" class="link-chips-bar"></div>
+          <div id="dash-links-bar" class="link-chips-bar hidden"></div>
 
           <!-- Collapsible: Attach another labeled link to current course -->
           <div id="dash-add-link-box" class="toolbar-box hidden">
@@ -85,6 +84,7 @@
                 <input id="dash-contest-url" placeholder="HackerRank course link for the selected course" style="flex:1" />
               </label>
               <button id="dash-savelink" class="ghost sm">Save link</button>
+              <button id="dash-toggle-add-link" class="ghost sm" title="Attach an extra labeled HackerRank link to this course">＋ Extra link</button>
               <button id="contest-del" class="ghost sm danger" title="Delete this course">🗑 Delete course</button>
             </div>
             <hr class="divider-line" />
@@ -215,14 +215,8 @@
               <label class="inline-label" style="flex:1">College <select id="cc-college" style="flex:1"></select></label>
               <label class="inline-label">Semester
                 <select id="cc-sem">
-                  <option value="Sem 1">Sem 1</option>
-                  <option value="Sem 2">Sem 2</option>
-                  <option value="Sem 3">Sem 3</option>
-                  <option value="Sem 4">Sem 4</option>
-                  <option value="Sem 5">Sem 5</option>
-                  <option value="Sem 6">Sem 6</option>
-                  <option value="Sem 7">Sem 7</option>
-                  <option value="Sem 8">Sem 8</option>
+                  <option value="Even Sem (2026-27)">Even Sem (2026-27)</option>
+                  <option value="Odd Sem (2025-26)">Odd Sem (2025-26)</option>
                   <option value="">Unassigned</option>
                   <option value="__custom__">＋ Custom…</option>
                 </select>
@@ -522,7 +516,7 @@
     </div>
   </div>
 
-  <script src="/theme.js?v=10"></script>
-  <script src="/app.js?v=10"></script>
+  <script src="/theme.js?v=11"></script>
+  <script src="/app.js?v=11"></script>
 </body>
 </html>
